@@ -20,7 +20,7 @@ on:
         required: true
 
 env:
-  TF_REPO: my-org/terraform-repo
+  TF_REPO: matar-Port-demo/create-iam-role
   TF_DIR: resources
   BRANCH_PREFIX: create-iam
   MAIN_BRANCH: main
