@@ -3,18 +3,24 @@ name: Create IAM Role
 on:
   workflow_dispatch:
     inputs:
-      PORT_RUN_ID:
-        description: 'Port Run ID'
-        required: true
-      ROLE_NAME:
+      role_name:
         description: 'IAM Role name'
         required: true
-      POLICY_JSON:
-        description: 'IAM policy JSON (escaped)'
+      use_existing_policy:
+        description: 'Whether to use predefined policy ARNs'
+        required: true
+      policy:
+        description: 'List of predefined AWS policy names (if use_existing_policy=true)'
+        required: false
+      custom_policy:
+        description: 'JSON of inline IAM policy (if use_existing_policy=false)'
+        required: false
+      port_context:
+        description: 'Port context object (includes runId)'
         required: true
 
 env:
-  TF_REPO: matar-Port-demo/create-iam-role
+  TF_REPO: my-org/terraform-repo
   TF_DIR: resources
   BRANCH_PREFIX: create-iam
   MAIN_BRANCH: main
@@ -22,16 +28,24 @@ env:
 jobs:
   start:
     runs-on: ubuntu-latest
+    outputs:
+      port_run_id: ${{ steps.extract_run_id.outputs.PORT_RUN_ID }}
     steps:
+      - name: Extract Port Run ID
+        id: extract_run_id
+        run: |
+          echo "PORT_RUN_ID=$(echo '${{ toJson(github.event.inputs.port_context) }}' | jq -r '.runId')" >> $GITHUB_ENV
+          echo "::set-output name=PORT_RUN_ID::$(echo '${{ toJson(github.event.inputs.port_context) }}' | jq -r '.runId')"
+
       - name: Log start to Port
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: ${{ secrets.PORT_BASE_URL }}
+          baseUrl: https://api.getport.io
           operation: PATCH_RUN
-          runId: ${{ github.event.inputs.PORT_RUN_ID }}
-          logMessage: "🚀 Starting IAM role creation for ${{ github.event.inputs.ROLE_NAME }}"
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🚀 Starting IAM role creation for `${{ github.event.inputs.role_name }}`"
 
   create-pr:
     runs-on: ubuntu-latest
@@ -48,25 +62,42 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           path: tfrepo
 
-      - name: Prepare IAM Role File
+      - name: Generate IAM Role Terraform File
         run: |
           mkdir -p tfrepo/${{ env.TF_DIR }}
-          TEMPLATE=$(<templates/iam-role.tf)
-          ESCAPED_POLICY=$(echo "${{ github.event.inputs.POLICY_JSON }}" | base64 --decode)
+          ROLE_NAME="${{ github.event.inputs.role_name }}"
+          FILE="tfrepo/${{ env.TF_DIR }}/${ROLE_NAME}.tf"
 
-          IAM_FILE="tfrepo/${{ env.TF_DIR }}/${{ github.event.inputs.ROLE_NAME }}.tf"
-          echo "${TEMPLATE//\{\{ role_name \}\}/${{ github.event.inputs.ROLE_NAME }}}" | \
-            sed "s|{{ policy_json }}|$ESCAPED_POLICY|" > $IAM_FILE
+          if [[ "${{ github.event.inputs.use_existing_policy }}" == "true" ]]; then
+            TEMPLATE=$(<templates/iam-role-existing-policy.tf)
+            ATTACHMENTS=""
+            for p in $(echo '${{ toJson(github.event.inputs.policy) }}' | jq -r '.[]'); do
+              ATTACHMENTS+="resource \"aws_iam_role_policy_attachment\" \"attach_${p}\" {\n"
+              ATTACHMENTS+="  role       = aws_iam_role.example.name\n"
+              ATTACHMENTS+="  policy_arn = \"arn:aws:iam::aws:policy/${p}\"\n"
+              ATTACHMENTS+="}\n\n"
+            done
+            ESCAPED_ATTACHMENTS=$(echo -e "$ATTACHMENTS")
+            RESULT="${TEMPLATE//\{\{ role_name \}\}/$ROLE_NAME}"
+            echo "${RESULT//\{\{ policy_attachments \}\}/$ESCAPED_ATTACHMENTS}" > "$FILE"
+
+          else
+            TEMPLATE=$(<templates/iam-role-inline-policy.tf)
+            POLICY=$(echo '${{ toJson(github.event.inputs.custom_policy) }}' | jq -c .)
+            ESCAPED_POLICY=$(echo "$POLICY" | sed 's/[&/\]/\\&/g')
+            RESULT="${TEMPLATE//\{\{ role_name \}\}/$ROLE_NAME}"
+            echo "${RESULT//\{\{ policy_json \}\}/$ESCAPED_POLICY}" > "$FILE"
+          fi
 
       - name: Create Pull Request
         id: create_pr
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "Add IAM role ${{ github.event.inputs.ROLE_NAME }}"
+          commit-message: "Add IAM role ${{ github.event.inputs.role_name }}"
           branch: ${{ env.BRANCH_PREFIX }}-${{ github.run_id }}
           base: ${{ env.MAIN_BRANCH }}
-          title: "Create IAM role ${{ github.event.inputs.ROLE_NAME }}"
+          title: "Create IAM role ${{ github.event.inputs.role_name }}"
           body: "This PR adds the IAM role via Terraform."
 
       - name: Log PR to Port
@@ -74,10 +105,10 @@ jobs:
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: ${{ secrets.PORT_BASE_URL }}
+          baseUrl: https://api.getport.io
           operation: PATCH_RUN
-          runId: ${{ github.event.inputs.PORT_RUN_ID }}
-          logMessage: "📥 Created PR to add IAM role"
+          runId: ${{ needs.start.outputs.port_run_id }}
+          logMessage: "📥 Created PR for IAM role"
           link: "[\"${{ steps.create_pr.outputs.pull-request-url }}\"]"
 
   merge-and-apply:
@@ -109,10 +140,10 @@ jobs:
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: ${{ secrets.PORT_BASE_URL }}
+          baseUrl: https://api.getport.io
           operation: PATCH_RUN
-          runId: ${{ github.event.inputs.PORT_RUN_ID }}
+          runId: ${{ needs.start.outputs.port_run_id }}
           status: "SUCCESS"
-          summary: "✅ IAM role created successfully"
+          summary: "✅ IAM role `${{ github.event.inputs.role_name }}` created"
           logMessage: "🌍 Terraform applied IAM role"
           link: "[\"${{ needs.create-pr.outputs.pr_url }}\"]"
