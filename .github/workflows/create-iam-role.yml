@@ -34,10 +34,9 @@ jobs:
       - name: Extract Port Run ID
         id: extract_run_id
         run: |
-          PORT_RUN_ID=$(echo '${{ toJson(github.event.inputs.port_context) }}' | jq -r '.runId')
-          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
+          echo '${{ github.event.inputs.port_context }}' | jq -r '.runId' > $GITHUB_ENV
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
-      
+
       - name: Log start to Port
         uses: port-labs/port-github-action@v1
         with:
