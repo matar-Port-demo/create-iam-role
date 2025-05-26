@@ -18,7 +18,12 @@ on:
       port_context:
         description: 'Port context object (includes runId)'
         required: true
-
+        
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+  
 env:
   TF_REPO: matar-Port-demo/create-iam-role
   TF_DIR: resources
