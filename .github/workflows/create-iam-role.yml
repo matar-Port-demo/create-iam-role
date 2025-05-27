@@ -107,11 +107,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: merge-pr
     steps:
-      - name: Checkout Repo After Merge
-        uses: actions/checkout@v3
-        with:
-          repository: ${{ env.TF_REPO }}
-          token: ${{ secrets.GH_PAT }}
+      - name: Clone and Pull Updated Main
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ env.TF_REPO }} repo
+          cd repo
+          git checkout main
+          git pull origin main
+          echo "REPO_PATH=$(pwd)/repo" >> $GITHUB_ENV
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
@@ -121,7 +125,7 @@ jobs:
       - name: Terraform Init & Apply
         run: |
           ROLE_NAME="${{ github.event.inputs.role_name }}"
-          TF_DIR="${{ env.BASE_TF_DIR }}/$ROLE_NAME"
+          TF_DIR="$GITHUB_WORKSPACE/repo/${{ env.BASE_TF_DIR }}/$ROLE_NAME"
           cd "$TF_DIR"
           terraform init
           terraform plan
