@@ -136,6 +136,7 @@ jobs:
 
       - name: Terraform Init & Apply
         run: |
+          cd ${{ env.TF_DIR }}
           terraform init
           terraform plan
           terraform apply -auto-approve
