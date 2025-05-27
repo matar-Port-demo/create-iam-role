@@ -7,10 +7,10 @@ on:
         description: 'IAM Role name'
         required: true
       use_existing_policy:
-        description: 'Whether to use predefined policy ARNs'
+        description: 'Whether to use predefined AWS-managed policies'
         required: true
       policy:
-        description: 'List of predefined AWS policy names (if use_existing_policy=true)'
+        description: 'List of AWS managed policy names (if use_existing_policy=true)'
         required: false
       custom_policy:
         description: 'JSON of inline IAM policy (if use_existing_policy=false)'
@@ -71,60 +71,49 @@ jobs:
           ROLE_NAME="${{ github.event.inputs.role_name }}"
           FILE="${{ env.TF_DIR }}/${ROLE_NAME}.tf"
 
-          if [[ "${{ github.event.inputs.use_existing_policy }}" == "true" ]]; then
-            echo "Generating template for predefined policy..."
-            echo "resource \"aws_iam_role\" \"${ROLE_NAME}_role\" {
-  name = \"${ROLE_NAME}\"
-  assume_role_policy = jsonencode({
-    Version = \"2012-10-17\",
-    Statement = [{
-      Effect = \"Allow\",
-      Principal = {
-        Service = \"ec2.amazonaws.com\"
-      },
-      Action = \"sts:AssumeRole\"
-    }]
-  })
-}" > "$FILE"
+          echo "Generating Terraform config for IAM role: $ROLE_NAME"
 
+          cat <<EOF > "$FILE"
+          resource "aws_iam_role" "${ROLE_NAME}_role" {
+            name = "${ROLE_NAME}"
+            assume_role_policy = jsonencode({
+              Version = "2012-10-17",
+              Statement = [{
+                Effect = "Allow",
+                Principal = {
+                  Service = "ec2.amazonaws.com"
+                },
+                Action = "sts:AssumeRole"
+              }]
+            })
+          }
+          EOF
+
+          if [[ "${{ github.event.inputs.use_existing_policy }}" == "true" ]]; then
+            echo "Attaching existing AWS managed policies..."
             for p in $(echo '${{ toJson(github.event.inputs.policy) }}' | jq -r '.[]'); do
               cat <<EOF >> "$FILE"
 
-resource "aws_iam_role_policy_attachment" "attach_${p}_${ROLE_NAME}" {
-  role       = aws_iam_role.${ROLE_NAME}_role.name
-  policy_arn = "arn:aws:iam::aws:policy/${p}"
-}
-EOF
+            resource "aws_iam_role_policy_attachment" "attach_${p}_${ROLE_NAME}" {
+              role       = aws_iam_role.${ROLE_NAME}_role.name
+              policy_arn = "arn:aws:iam::aws:policy/${p}"
+            }
+            EOF
             done
-
           else
-            echo "Generating template for custom inline policy..."
+            echo "Creating custom inline policy..."
             POLICY=$(echo '${{ toJson(github.event.inputs.custom_policy) }}' | jq -c .)
-            ESCAPED_POLICY=$(echo "$POLICY" | sed 's/[&/\]/\\&/g')
 
-            cat <<EOF > "$FILE"
-resource "aws_iam_role" "${ROLE_NAME}_role" {
-  name = "${ROLE_NAME}"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect = "Allow",
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      },
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
+            cat <<EOF >> "$FILE"
 
-resource "aws_iam_role_policy" "${ROLE_NAME}_policy" {
-  name   = "policy-for-${ROLE_NAME}"
-  role   = aws_iam_role.${ROLE_NAME}_role.id
-  policy = <<POLICY
-${ESCAPED_POLICY}
-POLICY
-}
-EOF
+            resource "aws_iam_role_policy" "${ROLE_NAME}_policy" {
+              name   = "policy-for-${ROLE_NAME}"
+              role   = aws_iam_role.${ROLE_NAME}_role.id
+              policy = <<POLICY
+            ${POLICY}
+            POLICY
+            }
+            EOF
           fi
 
       - name: Create Pull Request
