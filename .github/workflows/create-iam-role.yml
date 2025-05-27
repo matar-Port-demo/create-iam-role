@@ -94,26 +94,26 @@ jobs:
             for p in $(echo '${{ toJson(github.event.inputs.policy) }}' | jq -r '.[]'); do
               cat <<EOF >> "$FILE"
 
-            resource "aws_iam_role_policy_attachment" "attach_${p}_${ROLE_NAME}" {
-              role       = aws_iam_role.${ROLE_NAME}_role.name
-              policy_arn = "arn:aws:iam::aws:policy/${p}"
-            }
-            EOF
-            done
-          else
-            echo "Creating custom inline policy..."
-            POLICY=$(echo '${{ toJson(github.event.inputs.custom_policy) }}' | jq -c .)
+              resource "aws_iam_role_policy_attachment" "attach_${p}_${ROLE_NAME}" {
+                role       = aws_iam_role.${ROLE_NAME}_role.name
+                policy_arn = "arn:aws:iam::aws:policy/${p}"
+              }
+              EOF
+                          done
+                        else
+                          echo "Creating custom inline policy..."
+                          POLICY=$(echo '${{ toJson(github.event.inputs.custom_policy) }}' | jq -c .)
+              
+                          cat <<EOF >> "$FILE"
 
-            cat <<EOF >> "$FILE"
-
-            resource "aws_iam_role_policy" "${ROLE_NAME}_policy" {
-              name   = "policy-for-${ROLE_NAME}"
-              role   = aws_iam_role.${ROLE_NAME}_role.id
-              policy = <<POLICY
-            ${POLICY}
-            POLICY
-            }
-            EOF
+              resource "aws_iam_role_policy" "${ROLE_NAME}_policy" {
+                name   = "policy-for-${ROLE_NAME}"
+                role   = aws_iam_role.${ROLE_NAME}_role.id
+                policy = <<POLICY
+              ${POLICY}
+              POLICY
+              }
+              EOF
           fi
 
       - name: Create Pull Request
