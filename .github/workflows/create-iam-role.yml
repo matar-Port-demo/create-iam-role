@@ -69,6 +69,7 @@ jobs:
           mkdir -p ${{ env.TF_DIR }}
           ROLE_NAME="${{ github.event.inputs.role_name }}"
           FILE="${{ env.TF_DIR }}/${ROLE_NAME}.tf"
+
           if [[ "${{ github.event.inputs.use_existing_policy }}" == "true" ]]; then
             TEMPLATE=$(<templates/iam-role-existing-policy.tf)
             ATTACHMENTS=""
@@ -126,8 +127,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
-      - name: Terraform Init & Apply
+      - name: Terraform Init & Apply (isolated)
         run: |
+          ROLE_NAME="${{ github.event.inputs.role_name }}"
+          mkdir apply_single
+          cp "${{ env.TF_DIR }}/${ROLE_NAME}.tf" apply_single/
+          cd apply_single
           terraform init
           terraform plan
           terraform apply -auto-approve
