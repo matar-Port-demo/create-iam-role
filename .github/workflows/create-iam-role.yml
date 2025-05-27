@@ -49,6 +49,7 @@ jobs:
     needs: start
     outputs:
       pr_url: ${{ steps.create_pr.outputs.pull-request-url }}
+      tf_dir: ${{ steps.generate.outputs.tf_dir }}
     steps:
       - name: Checkout Terraform Repo
         uses: actions/checkout@v3
@@ -57,6 +58,7 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Generate Terraform File from Template
+        id: generate
         run: |
           ROLE_NAME="${{ github.event.inputs.role_name }}"
           TF_DIR="${{ env.BASE_TF_DIR }}/$ROLE_NAME"
@@ -64,7 +66,7 @@ jobs:
           TEMPLATE_PATH=templates/iam-role-static.tf
           TARGET_FILE="$TF_DIR/main.tf"
           sed "s/{{ role_name }}/$ROLE_NAME/g" "$TEMPLATE_PATH" > "$TARGET_FILE"
-          echo "TF_DIR=$TF_DIR" >> $GITHUB_ENV
+          echo "tf_dir=$TF_DIR" >> $GITHUB_OUTPUT
 
       - name: Create Pull Request
         id: create_pr
@@ -111,7 +113,7 @@ jobs:
 
       - name: Terraform Init & Apply
         run: |
-          cd $TF_DIR
+          cd ${{ needs.create-pr.outputs.tf_dir }}
           terraform init
           terraform plan
           terraform apply -auto-approve
