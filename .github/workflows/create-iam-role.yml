@@ -105,7 +105,7 @@ jobs:
 
   apply-terraform:
     runs-on: ubuntu-latest
-    needs: merge-pr
+    needs: [merge-pr, start, create-pr]
     steps:
       - name: Clone and Pull Updated Main
         run: |
@@ -121,6 +121,16 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.7
+
+      - name: Log apply start to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ needs.start.outputs.port_run_id }}
+          logMessage: "🔧 Starting terraform apply for IAM role `${{ github.event.inputs.role_name }}`"
 
       - name: Terraform Init & Apply
         env:
@@ -146,4 +156,4 @@ jobs:
           status: "SUCCESS"
           summary: "✅ IAM role `${{ github.event.inputs.role_name }}` created"
           logMessage: "🌍 Terraform applied IAM role"
-          link: "[\"${{ needs.create-pr.outputs.pr_url }}\"]"
+          link: "[\"https://console.aws.amazon.com/iam/home#/roles/${{ github.event.inputs.role_name }}\", \"${{ needs.create-pr.outputs.pr_url }}\"]"
