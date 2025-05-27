@@ -83,7 +83,6 @@ jobs:
             ESCAPED_ATTACHMENTS=$(echo -e "$ATTACHMENTS")
             RESULT="${TEMPLATE//\{\{ role_name \}\}/$ROLE_NAME}"
             echo "${RESULT//\{\{ policy_attachments \}\}/$ESCAPED_ATTACHMENTS}" > "$FILE"
-
           else
             TEMPLATE=$(<templates/iam-role-inline-policy.tf)
             POLICY=$(echo '${{ toJson(github.event.inputs.custom_policy) }}' | jq -c .)
@@ -129,6 +128,11 @@ jobs:
           gh pr merge --admin --squash "${{ needs.create-pr.outputs.pr_url }}"
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.7
 
       - name: Terraform Init & Apply
         run: |
