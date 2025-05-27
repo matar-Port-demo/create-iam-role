@@ -72,40 +72,39 @@ jobs:
           FILE="${{ env.TF_DIR }}/${ROLE_NAME}.tf"
 
           if [[ "${{ github.event.inputs.use_existing_policy }}" == "true" ]]; then
-            TEMPLATE=$(cat <<'EOF'
-resource "aws_iam_role" "{{ role_name }}_role" {
-  name = "{{ role_name }}"
+            echo "Generating template for predefined policy..."
+            echo "resource \"aws_iam_role\" \"${ROLE_NAME}_role\" {
+  name = \"${ROLE_NAME}\"
   assume_role_policy = jsonencode({
-    Version = "2012-10-17",
+    Version = \"2012-10-17\",
     Statement = [{
-      Effect = "Allow",
+      Effect = \"Allow\",
       Principal = {
-        Service = "ec2.amazonaws.com"
+        Service = \"ec2.amazonaws.com\"
       },
-      Action = "sts:AssumeRole"
+      Action = \"sts:AssumeRole\"
     }]
   })
-}
+}" > "$FILE"
 
-{{ policy_attachments }}
-EOF
-)
-
-            ATTACHMENTS=""
             for p in $(echo '${{ toJson(github.event.inputs.policy) }}' | jq -r '.[]'); do
-              ATTACHMENTS+="resource \"aws_iam_role_policy_attachment\" \"attach_${p}_${ROLE_NAME}\" {\n"
-              ATTACHMENTS+="  role       = aws_iam_role.${ROLE_NAME}_role.name\n"
-              ATTACHMENTS+="  policy_arn = \"arn:aws:iam::aws:policy/${p}\"\n"
-              ATTACHMENTS+="}\n\n"
+              cat <<EOF >> "$FILE"
+
+resource "aws_iam_role_policy_attachment" "attach_${p}_${ROLE_NAME}" {
+  role       = aws_iam_role.${ROLE_NAME}_role.name
+  policy_arn = "arn:aws:iam::aws:policy/${p}"
+}
+EOF
             done
-            ESCAPED_ATTACHMENTS=$(echo -e "$ATTACHMENTS")
-            RESULT="${TEMPLATE//\{\{ role_name \}\}/$ROLE_NAME}"
-            echo "${RESULT//\{\{ policy_attachments \}\}/$ESCAPED_ATTACHMENTS}" > "$FILE"
 
           else
-            TEMPLATE=$(cat <<'EOF'
-resource "aws_iam_role" "{{ role_name }}_role" {
-  name = "{{ role_name }}"
+            echo "Generating template for custom inline policy..."
+            POLICY=$(echo '${{ toJson(github.event.inputs.custom_policy) }}' | jq -c .)
+            ESCAPED_POLICY=$(echo "$POLICY" | sed 's/[&/\]/\\&/g')
+
+            cat <<EOF > "$FILE"
+resource "aws_iam_role" "${ROLE_NAME}_role" {
+  name = "${ROLE_NAME}"
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -118,20 +117,14 @@ resource "aws_iam_role" "{{ role_name }}_role" {
   })
 }
 
-resource "aws_iam_role_policy" "{{ role_name }}_policy" {
-  name   = "policy-for-{{ role_name }}"
-  role   = aws_iam_role.{{ role_name }}_role.id
+resource "aws_iam_role_policy" "${ROLE_NAME}_policy" {
+  name   = "policy-for-${ROLE_NAME}"
+  role   = aws_iam_role.${ROLE_NAME}_role.id
   policy = <<POLICY
-{{ policy_json }}
+${ESCAPED_POLICY}
 POLICY
 }
 EOF
-)
-
-            POLICY=$(echo '${{ toJson(github.event.inputs.custom_policy) }}' | jq -c .)
-            ESCAPED_POLICY=$(echo "$POLICY" | sed 's/[&/\]/\\&/g')
-            RESULT="${TEMPLATE//\{\{ role_name \}\}/$ROLE_NAME}"
-            echo "${RESULT//\{\{ policy_json \}\}/$ESCAPED_POLICY}" > "$FILE"
           fi
 
       - name: Create Pull Request
