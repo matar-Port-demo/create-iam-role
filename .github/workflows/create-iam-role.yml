@@ -18,12 +18,12 @@ on:
       port_context:
         description: 'Port context object (includes runId)'
         required: true
-        
+
 permissions:
   contents: write
   pull-requests: write
   actions: read
-  
+
 env:
   TF_REPO: matar-Port-demo/create-iam-role
   TF_DIR: resources
@@ -42,6 +42,7 @@ jobs:
           PORT_RUN_ID=$(echo '${{ github.event.inputs.port_context }}' | jq -r '.runId')
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+
       - name: Log start to Port
         uses: port-labs/port-github-action@v1
         with:
@@ -58,20 +59,17 @@ jobs:
     outputs:
       pr_url: ${{ steps.create_pr.outputs.pull-request-url }}
     steps:
-      - uses: actions/checkout@v3
-
       - name: Checkout Terraform Repo
         uses: actions/checkout@v3
         with:
           repository: ${{ env.TF_REPO }}
           token: ${{ secrets.GH_PAT }}
-          path: tfrepo
 
       - name: Generate IAM Role Terraform File
         run: |
-          mkdir -p tfrepo/${{ env.TF_DIR }}
+          mkdir -p ${{ env.TF_DIR }}
           ROLE_NAME="${{ github.event.inputs.role_name }}"
-          FILE="tfrepo/${{ env.TF_DIR }}/${ROLE_NAME}.tf"
+          FILE="${{ env.TF_DIR }}/${ROLE_NAME}.tf"
 
           if [[ "${{ github.event.inputs.use_existing_policy }}" == "true" ]]; then
             TEMPLATE=$(<templates/iam-role-existing-policy.tf)
@@ -125,17 +123,15 @@ jobs:
         with:
           repository: ${{ env.TF_REPO }}
           token: ${{ secrets.GH_PAT }}
-          path: tfrepo
 
       - name: Merge Pull Request
         run: |
           gh pr merge --admin --squash "${{ needs.create-pr.outputs.pr_url }}"
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Terraform Init & Apply
         run: |
-          cd tfrepo
           terraform init
           terraform plan
           terraform apply -auto-approve
