@@ -1,3 +1,6 @@
+provider "aws" {
+}
+
 resource "aws_iam_role" "example" {
   name = "{{ role_name }}"
   assume_role_policy = jsonencode({
