@@ -6,15 +6,6 @@ on:
       role_name:
         description: 'IAM Role name'
         required: true
-      use_existing_policy:
-        description: 'Whether to use predefined policy ARNs'
-        required: true
-      policy:
-        description: 'List of predefined AWS policy names (if use_existing_policy=true)'
-        required: false
-      custom_policy:
-        description: 'JSON of inline IAM policy (if use_existing_policy=false)'
-        required: false
       port_context:
         description: 'Port context object (includes runId)'
         required: true
@@ -26,7 +17,7 @@ permissions:
 
 env:
   TF_REPO: matar-Port-demo/create-iam-role
-  TF_DIR: resources
+  BASE_TF_DIR: resources
   BRANCH_PREFIX: create-iam
   MAIN_BRANCH: main
 
@@ -42,6 +33,7 @@ jobs:
           PORT_RUN_ID=$(echo '${{ github.event.inputs.port_context }}' | jq -r '.runId')
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+
       - name: Log start to Port
         uses: port-labs/port-github-action@v1
         with:
@@ -64,30 +56,15 @@ jobs:
           repository: ${{ env.TF_REPO }}
           token: ${{ secrets.GH_PAT }}
 
-      - name: Generate IAM Role Terraform File
+      - name: Generate Terraform File from Template
         run: |
-          mkdir -p ${{ env.TF_DIR }}
           ROLE_NAME="${{ github.event.inputs.role_name }}"
-          FILE="${{ env.TF_DIR }}/${ROLE_NAME}.tf"
-
-          if [[ "${{ github.event.inputs.use_existing_policy }}" == "true" ]]; then
-            TEMPLATE=$(<templates/iam-role-existing-policy.tf)
-            ATTACHMENTS=""
-            for p in $(echo '${{ toJson(github.event.inputs.policy) }}' | jq -r '.[]'); do
-              ATTACHMENTS+="resource \"aws_iam_role_policy_attachment\" \"attach_${p}\" {\n"
-              ATTACHMENTS+="  role       = aws_iam_role.example.name\n"
-              ATTACHMENTS+="  policy_arn = \"arn:aws:iam::aws:policy/${p}\"\n"
-              ATTACHMENTS+="}\n\n"
-            done
-            ESCAPED_ATTACHMENTS=$(echo -e "$ATTACHMENTS")
-            RESULT="${TEMPLATE//\{\{ role_name \}\}/$ROLE_NAME}"
-            echo "${RESULT//\{\{ policy_attachments \}\}/$ESCAPED_ATTACHMENTS}" > "$FILE"
-          else
-            TEMPLATE=$(<templates/iam-role-inline-policy.tf)
-            POLICY=$(echo '${{ toJson(github.event.inputs.custom_policy) }}' | jq -c .)
-            ESCAPED_POLICY=$(echo "$POLICY" | sed 's/[&/\\]/\\&/g')
-            RESULT="${TEMPLATE//\{\{ role_name \}\}/$ROLE_NAME}"
-            echo "${RESULT//\{\{ policy_json \}\}/$ESCAPED_POLICY}" > "$FILE"
+          TF_DIR="${{ env.BASE_TF_DIR }}/$ROLE_NAME"
+          mkdir -p "$TF_DIR"
+          TEMPLATE_PATH=templates/iam-role-static.tf
+          TARGET_FILE="$TF_DIR/main.tf"
+          sed "s/{{ role_name }}/$ROLE_NAME/g" "$TEMPLATE_PATH" > "$TARGET_FILE"
+          echo "TF_DIR=$TF_DIR" >> $GITHUB_ENV
 
       - name: Create Pull Request
         id: create_pr
@@ -98,7 +75,7 @@ jobs:
           branch: ${{ env.BRANCH_PREFIX }}-${{ github.run_id }}
           base: ${{ env.MAIN_BRANCH }}
           title: "Create IAM role ${{ github.event.inputs.role_name }}"
-          body: "This PR adds the IAM role via Terraform."
+          body: "This PR adds a basic IAM role via Terraform."
 
       - name: Log PR to Port
         uses: port-labs/port-github-action@v1
@@ -127,12 +104,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
-      - name: Terraform Init & Apply (isolated)
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.7
+
+      - name: Terraform Init & Apply
         run: |
-          ROLE_NAME="${{ github.event.inputs.role_name }}"
-          mkdir apply_single
-          cp "${{ env.TF_DIR }}/${ROLE_NAME}.tf" apply_single/
-          cd apply_single
+          cd $TF_DIR
           terraform init
           terraform plan
           terraform apply -auto-approve
