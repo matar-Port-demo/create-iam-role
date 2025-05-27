@@ -1,4 +1,4 @@
-resource "aws_iam_role" "example" {
+resource "aws_iam_role" "{{ role_name }}_role" {
   name = "{{ role_name }}"
 
   assume_role_policy = jsonencode({
@@ -13,9 +13,9 @@ resource "aws_iam_role" "example" {
   })
 }
 
-resource "aws_iam_role_policy" "example_policy" {
+resource "aws_iam_role_policy" "{{ role_name }}_policy" {
   name   = "policy-for-{{ role_name }}"
-  role   = aws_iam_role.example.id
+  role   = aws_iam_role.{{ role_name }}_role.id
   policy = <<POLICY
 {{ policy_json }}
 POLICY
