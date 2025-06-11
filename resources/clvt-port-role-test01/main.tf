@@ -1,3 +1,6 @@
+provider "aws" {
+}
+
 resource "aws_iam_role" "example" {
   name = "clvt-port-role-test01"
   assume_role_policy = jsonencode({
