@@ -22,7 +22,7 @@ permissions:
   actions: read
 
 env:
-  TF_REPO: matar-Port-demo/create-storage-bucket
+  TF_REPO: matar-Port-demo/create-iam-role
   BASE_TF_DIR: resources
   BRANCH_PREFIX: create-storage-bucket
   MAIN_BRANCH: main
