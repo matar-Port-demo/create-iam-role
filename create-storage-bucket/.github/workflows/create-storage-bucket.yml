@@ -1,0 +1,177 @@
+name: Create Storage Bucket
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket_name:
+        description: 'GCP Storage Bucket name'
+        required: true
+      project_id:
+        description: 'GCP Project ID'
+        required: true
+      location:
+        description: 'Bucket location (e.g., us-central1)'
+        required: true
+      port_context:
+        description: 'Port context object (includes runId)'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+env:
+  TF_REPO: matar-Port-demo/create-storage-bucket
+  BASE_TF_DIR: resources
+  BRANCH_PREFIX: create-storage-bucket
+  MAIN_BRANCH: main
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    outputs:
+      port_run_id: ${{ steps.extract_run_id.outputs.PORT_RUN_ID }}
+    steps:
+      - name: Extract Port Run ID
+        id: extract_run_id
+        run: |
+          PORT_RUN_ID=$(echo '${{ github.event.inputs.port_context }}' | jq -r '.runId')
+          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
+          echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+
+      - name: Log start to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.us.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🚀 Starting GCP storage bucket creation for `${{ github.event.inputs.bucket_name }}`"
+
+  create-pr:
+    runs-on: ubuntu-latest
+    needs: start
+    outputs:
+      pr_url: ${{ steps.create_pr.outputs.pull-request-url }}
+    steps:
+      - name: Checkout Terraform Repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.TF_REPO }}
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Generate Terraform File from Template
+        run: |
+          BUCKET_NAME="${{ github.event.inputs.bucket_name }}"
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          LOCATION="${{ github.event.inputs.location }}"
+          TF_DIR="${{ env.BASE_TF_DIR }}/$BUCKET_NAME"
+          mkdir -p "$TF_DIR"
+          TEMPLATE_PATH=templates/storage-bucket.tf
+          TARGET_FILE="$TF_DIR/main.tf"
+          sed -e "s/{{ bucket_name }}/$BUCKET_NAME/g" \
+              -e "s/{{ project_id }}/$PROJECT_ID/g" \
+              -e "s/{{ location }}/$LOCATION/g" \
+              "$TEMPLATE_PATH" > "$TARGET_FILE"
+
+      - name: Create Pull Request
+        id: create_pr
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GH_PAT }}
+          commit-message: "Add GCP storage bucket ${{ github.event.inputs.bucket_name }}"
+          branch: ${{ env.BRANCH_PREFIX }}-${{ github.run_id }}
+          base: ${{ env.MAIN_BRANCH }}
+          title: "Create GCP storage bucket ${{ github.event.inputs.bucket_name }}"
+          body: "This PR adds a GCP storage bucket via Terraform."
+
+      - name: Log PR to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.us.getport.io
+          operation: PATCH_RUN
+          runId: ${{ needs.start.outputs.port_run_id }}
+          logMessage: "📥 Created PR for GCP storage bucket"
+          link: "[\"${{ steps.create_pr.outputs.pull-request-url }}\"]"
+
+  # merge-pr:
+  #   runs-on: ubuntu-latest
+  #   needs: create-pr
+  #   steps:
+  #     - name: Checkout Terraform Repo
+  #       uses: actions/checkout@v3
+  #       with:
+  #         repository: ${{ env.TF_REPO }}
+  #         token: ${{ secrets.GH_PAT }}
+  #
+  #     - name: Merge Pull Request
+  #       run: |
+  #         gh pr merge --admin --squash "${{ needs.create-pr.outputs.pr_url }}"
+  #       env:
+  #         GH_TOKEN: ${{ secrets.GH_PAT }}
+
+  # apply-terraform:
+  #   runs-on: ubuntu-latest
+  #   needs: [merge-pr, start, create-pr]
+  #   steps:
+  #     - name: Clone and Pull Updated Main
+  #       run: |
+  #         git config --global user.email "github-actions@github.com"
+  #         git config --global user.name "GitHub Actions"
+  #         git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ env.TF_REPO }} repo
+  #         cd repo
+  #         git checkout main
+  #         git pull origin main
+  #         echo "REPO_PATH=$(pwd)/repo" >> $GITHUB_ENV
+  #
+  #     - name: Set up Terraform
+  #       uses: hashicorp/setup-terraform@v2
+  #       with:
+  #         terraform_version: 1.5.7
+  #
+  #     - name: Authenticate to Google Cloud
+  #       uses: google-github-actions/auth@v1
+  #       with:
+  #         credentials_json: ${{ secrets.GCP_SA_KEY }}
+  #
+  #     - name: Set up Cloud SDK
+  #       uses: google-github-actions/setup-gcloud@v1
+  #
+  #     - name: Log apply start to Port
+  #       uses: port-labs/port-github-action@v1
+  #       with:
+  #         clientId: ${{ secrets.PORT_CLIENT_ID }}
+  #         clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+  #         baseUrl: https://api.us.getport.io
+  #         operation: PATCH_RUN
+  #         runId: ${{ needs.start.outputs.port_run_id }}
+  #         logMessage: "🔧 Starting terraform apply for GCP storage bucket `${{ github.event.inputs.bucket_name }}`"
+  #
+  #     - name: Terraform Init & Apply
+  #       env:
+  #         GOOGLE_PROJECT: ${{ github.event.inputs.project_id }}
+  #       run: |
+  #         BUCKET_NAME="${{ github.event.inputs.bucket_name }}"
+  #         TF_DIR="$GITHUB_WORKSPACE/repo/${{ env.BASE_TF_DIR }}/$BUCKET_NAME"
+  #         cd "$TF_DIR"
+  #         terraform init
+  #         terraform plan
+  #         terraform apply -auto-approve
+  #
+  #     - name: Finalize in Port
+  #       uses: port-labs/port-github-action@v1
+  #       with:
+  #         clientId: ${{ secrets.PORT_CLIENT_ID }}
+  #         clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+  #         baseUrl: https://api.us.getport.io
+  #         operation: PATCH_RUN
+  #         runId: ${{ needs.start.outputs.port_run_id }}
+  #         status: "SUCCESS"
+  #         summary: "✅ GCP storage bucket `${{ github.event.inputs.bucket_name }}` created"
+  #         logMessage: "🌍 Terraform applied GCP storage bucket"
+  #         link: "[\"https://console.cloud.google.com/storage/browser/${{ github.event.inputs.bucket_name }}?project=${{ github.event.inputs.project_id }}\", \"${{ needs.create-pr.outputs.pr_url }}\"]"
+
