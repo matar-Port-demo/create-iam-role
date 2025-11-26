@@ -38,14 +38,14 @@ jobs:
         run: |
           PORT_RUN_ID=$(echo '${{ github.event.inputs.port_context }}' | jq -r '.runId')
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
-          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_OUTPUT
+          echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
 
       - name: Log start to Port
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
+          baseUrl: https://api.us.getport.io
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "🚀 Starting GCP storage bucket creation for `${{ github.event.inputs.bucket_name }}`"
@@ -92,7 +92,7 @@ jobs:
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
+          baseUrl: https://api.us.getport.io
           operation: PATCH_RUN
           runId: ${{ needs.start.outputs.port_run_id }}
           logMessage: "📥 Created PR for GCP storage bucket"
