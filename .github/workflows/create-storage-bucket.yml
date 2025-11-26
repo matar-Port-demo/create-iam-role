@@ -38,7 +38,7 @@ jobs:
         run: |
           PORT_RUN_ID=$(echo '${{ github.event.inputs.port_context }}' | jq -r '.runId')
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
-          echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_OUTPUT
 
       - name: Log start to Port
         uses: port-labs/port-github-action@v1
