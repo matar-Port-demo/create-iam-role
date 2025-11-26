@@ -37,7 +37,7 @@
   "invocationMethod": {
     "type": "GITHUB",
     "org": "matar-Port-demo",
-    "repo": "terraform-workflow-in-port",
+    "repo": "create-iam-role",
     "workflow": "create-storage-bucket/.github/workflows/create-storage-bucket.yml",
     "workflowInputs": {
       "bucket_name": "{{ .inputs.bucket_name }}",
