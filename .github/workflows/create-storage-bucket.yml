@@ -45,7 +45,7 @@ jobs:
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.us.getport.io
+          baseUrl: https://api.getport.io
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "🚀 Starting GCP storage bucket creation for `${{ github.event.inputs.bucket_name }}`"
@@ -92,7 +92,7 @@ jobs:
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.us.getport.io
+          baseUrl: https://api.getport.io
           operation: PATCH_RUN
           runId: ${{ needs.start.outputs.port_run_id }}
           logMessage: "📥 Created PR for GCP storage bucket"
