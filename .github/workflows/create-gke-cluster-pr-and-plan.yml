@@ -95,13 +95,8 @@ jobs:
           title: "Create GKE cluster ${{ github.event.inputs.cluster_name }}"
           body: "This PR adds a GKE cluster via Terraform. **Waiting for approval in Port.**"
 
-      - name: Debug PR creation output
-        run: |
-          echo "PR URL output: '${{ steps.create_pr.outputs.pull-request-url }}'"
-          echo "PR number output: '${{ steps.create_pr.outputs.pull-request-number }}'"
-          echo "PR created output: '${{ steps.create_pr.outputs.pull-request-created }}'"
-
       - name: Log PR creation to Port
+        if: steps.create_pr.outputs.pull-request-url != ''
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -111,6 +106,17 @@ jobs:
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "📥 PR created: ${{ steps.create_pr.outputs.pull-request-url }}"
           link: "[\"${{ steps.create_pr.outputs.pull-request-url }}\"]"
+
+      - name: Log no changes detected
+        if: steps.create_pr.outputs.pull-request-url == ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "⚠️ No changes detected - PR may already exist or cluster already provisioned"
 
       - name: Create provisioning request entity
         uses: port-labs/port-github-action@v1
@@ -223,6 +229,21 @@ jobs:
             ⏸️  **Waiting for approval in Port...**
             
             Please review the plan above and approve this action to proceed with cluster creation.
+
+      - name: Save Terraform plan to provisioning request entity
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: |
+            {
+              "terraform_plan": "```\n${{ env.PLAN_OUTPUT }}\n```"
+            }
 
       # NOTE: Actual Terraform plan/apply is commented out since GCP account is not available
       # Uncomment the following steps when GCP credentials are configured:

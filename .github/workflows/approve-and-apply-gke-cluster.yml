@@ -226,7 +226,48 @@ jobs:
       #     terraform init
       #     terraform apply -auto-approve
 
-      - name: Update provisioning request status to completed
+      - name: Build Terraform resource details
+        id: build_resource_details
+        run: |
+          CLUSTER_NAME="${{ github.event.inputs.cluster_name }}"
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          REGION="${{ github.event.inputs.region }}"
+          
+          RESOURCE_DETAILS=$(jq -n \
+            --arg cluster_name "$CLUSTER_NAME" \
+            --arg project_id "$PROJECT_ID" \
+            --arg region "$REGION" \
+            --arg endpoint "https://$CLUSTER_NAME.$REGION.gke.cloud.google.com" \
+            '{
+              "resource_type": "google_container_cluster",
+              "resource_name": $cluster_name,
+              "project_id": $project_id,
+              "region": $region,
+              "cluster_endpoint": $endpoint,
+              "resource_id": "projects/\($project_id)/locations/\($region)/clusters/\($cluster_name)"
+            }')
+          
+          echo "RESOURCE_DETAILS<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESOURCE_DETAILS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Build properties JSON with resource details
+        id: build_properties
+        run: |
+          RESOURCE_DETAILS='${{ steps.build_resource_details.outputs.RESOURCE_DETAILS }}'
+          
+          PROPERTIES_JSON=$(jq -n \
+            --argjson resource "$RESOURCE_DETAILS" \
+            '{
+              "status": "completed",
+              "terraform_resource": $resource
+            }')
+          
+          echo "PROPERTIES_JSON<<EOF" >> $GITHUB_OUTPUT
+          echo "$PROPERTIES_JSON" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Update provisioning request with completed status and resource
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -236,10 +277,7 @@ jobs:
           identifier: ${{ env.PORT_RUN_ID }}
           blueprint: provisioningRequest
           runId: ${{ env.PORT_RUN_ID }}
-          properties: |
-            {
-              "status": "completed"
-            }
+          properties: ${{ steps.build_properties.outputs.PROPERTIES_JSON }}
 
       - name: Update provisioning request status to declined on failure
         if: failure()
