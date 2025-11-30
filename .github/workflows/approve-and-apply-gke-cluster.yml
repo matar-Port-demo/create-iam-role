@@ -59,7 +59,7 @@ jobs:
           for i in $(seq 1 $MAX_RETRIES); do
             echo "Attempt $i/$MAX_RETRIES: Fetching PR URL from Port run ${{ env.PORT_RUN_ID }}..."
             
-            RUN_DATA=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/${{ env.PORT_RUN_ID }}" \
+            RUN_DATA=$(curl -s -X GET "https://api.getport.io/v2/actions/runs/${{ env.PORT_RUN_ID }}" \
               -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
             
             echo "API Response: $RUN_DATA"
