@@ -230,6 +230,18 @@ jobs:
             
             Please review the plan above and approve this action to proceed with cluster creation.
 
+      - name: Build Terraform plan markdown
+        id: build_plan_markdown
+        run: |
+          PLAN_OUTPUT='${{ env.PLAN_OUTPUT }}'
+          PLAN_MARKDOWN=$(jq -n --arg plan "$PLAN_OUTPUT" '"```\n" + $plan + "\n```"')
+          
+          PROPERTIES_JSON=$(jq -n --arg markdown "$PLAN_MARKDOWN" '{"terraform_plan": $markdown}')
+          
+          echo "PROPERTIES_JSON<<EOF" >> $GITHUB_OUTPUT
+          echo "$PROPERTIES_JSON" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Save Terraform plan to provisioning request entity
         uses: port-labs/port-github-action@v1
         with:
@@ -240,10 +252,7 @@ jobs:
           identifier: ${{ env.PORT_RUN_ID }}
           blueprint: provisioningRequest
           runId: ${{ env.PORT_RUN_ID }}
-          properties: |
-            {
-              "terraform_plan": "```\n${{ env.PLAN_OUTPUT }}\n```"
-            }
+          properties: ${{ steps.build_plan_markdown.outputs.PROPERTIES_JSON }}
 
       # NOTE: Actual Terraform plan/apply is commented out since GCP account is not available
       # Uncomment the following steps when GCP credentials are configured:
