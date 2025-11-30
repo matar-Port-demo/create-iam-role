@@ -103,6 +103,90 @@ jobs:
           logMessage: "📥 PR created: ${{ steps.create_pr.outputs.pull-request-url }}"
           link: "[\"${{ steps.create_pr.outputs.pull-request-url }}\"]"
 
+      - name: Get requestor from Port run
+        id: get_requestor
+        run: |
+          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          
+          RUN_DATA=$(curl -s -X GET "https://api.getport.io/v2/actions/runs/${{ env.PORT_RUN_ID }}" \
+            -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
+          
+          REQUESTOR_ID=$(echo "$RUN_DATA" | jq -r '.run.createdBy // empty')
+          echo "REQUESTOR_ID=$REQUESTOR_ID" >> $GITHUB_ENV
+          echo "::set-output name=REQUESTOR_ID::$REQUESTOR_ID"
+
+      - name: Extract PR number from URL
+        id: extract_pr_number
+        run: |
+          PR_URL="${{ steps.create_pr.outputs.pull-request-url }}"
+          PR_NUMBER=$(echo "$PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          echo "::set-output name=PR_NUMBER::$PR_NUMBER"
+
+      - name: Create/Update PR entity in Port
+        run: |
+          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          
+          PR_URL="${{ steps.create_pr.outputs.pull-request-url }}"
+          PR_NUMBER="${{ env.PR_NUMBER }}"
+          PR_ID="pr-$PR_NUMBER"
+          
+          # Create or update PR entity
+          curl -s -X POST "https://api.getport.io/v1/entities?upsert=true" \
+            -H "Authorization: Bearer $PORT_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"identifier\": \"$PR_ID\",
+              \"title\": \"Create GKE cluster ${{ github.event.inputs.cluster_name }}\",
+              \"blueprint\": \"githubPullRequest\",
+              \"properties\": {
+                \"link\": \"$PR_URL\",
+                \"prNumber\": $PR_NUMBER,
+                \"status\": \"open\",
+                \"branch\": \"create-gke-cluster-${{ github.run_id }}\"
+              }
+            }" | jq '.'
+          
+          echo "PR_ENTITY_ID=$PR_ID" >> $GITHUB_ENV
+
+      - name: Create provisioning request entity with PR relation
+        run: |
+          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          
+          CLUSTER_NAME="${{ github.event.inputs.cluster_name }}"
+          PR_ENTITY_ID="${{ env.PR_ENTITY_ID }}"
+          REQUESTOR_ID="${{ env.REQUESTOR_ID }}"
+          
+          # Build relations object
+          RELATIONS="{\"pull_request\": \"$PR_ENTITY_ID\""
+          if [ -n "$REQUESTOR_ID" ] && [ "$REQUESTOR_ID" != "null" ]; then
+            RELATIONS="$RELATIONS, \"requestor\": \"$REQUESTOR_ID\""
+          fi
+          RELATIONS="$RELATIONS}"
+          
+          curl -s -X POST "https://api.getport.io/v1/entities?upsert=true" \
+            -H "Authorization: Bearer $PORT_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"identifier\": \"${{ env.PORT_RUN_ID }}\",
+              \"title\": \"GKE Cluster Provisioning: $CLUSTER_NAME\",
+              \"blueprint\": \"provisioningRequest\",
+              \"properties\": {
+                \"resource_name\": \"$CLUSTER_NAME\",
+                \"resource_type\": \"GKE Cluster\",
+                \"status\": \"waiting_approval\"
+              },
+              \"relations\": $RELATIONS
+            }" | jq '.'
+          
+          echo "✅ Created provisioning request entity with PR relation"
+
       - name: Generate Mock Terraform Plan Output
         id: mock_plan
         run: |

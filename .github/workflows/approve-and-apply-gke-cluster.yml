@@ -45,70 +45,67 @@ jobs:
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
 
-      - name: Get PR URL from Port run (with retry)
-        id: get_pr_url
+      - name: Get PR URL and approver from Port blueprint
+        id: get_pr_and_approver
         run: |
           PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
             -H "Content-Type: application/json" \
             -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
           
-          MAX_RETRIES=5
-          RETRY_DELAY=3
-          PR_URL=""
+          echo "Fetching provisioning request entity with identifier: ${{ env.PORT_RUN_ID }}"
           
-          for i in $(seq 1 $MAX_RETRIES); do
-            echo "Attempt $i/$MAX_RETRIES: Fetching PR URL from Port run ${{ env.PORT_RUN_ID }}..."
-            
-            RUN_DATA=$(curl -s -X GET "https://api.getport.io/v2/actions/runs/${{ env.PORT_RUN_ID }}" \
-              -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
-            
-            echo "API Response: $RUN_DATA"
-            
-            # Check if run exists
-            if echo "$RUN_DATA" | jq -e '.ok == false' > /dev/null 2>&1; then
-              echo "❌ Error: Run not found"
-              echo "Error message: $(echo "$RUN_DATA" | jq -r '.message // .error // "Unknown error"')"
-              echo "Full response: $RUN_DATA"
-              if [ $i -eq $MAX_RETRIES ]; then
-                echo "❌ Failed after $MAX_RETRIES attempts. Run ID: ${{ env.PORT_RUN_ID }}"
-                exit 1
-              fi
-              echo "Retrying in $RETRY_DELAY seconds..."
-              sleep $RETRY_DELAY
-              continue
-            fi
-            
-            # Check if response is valid JSON with run data
-            if ! echo "$RUN_DATA" | jq -e '.run' > /dev/null 2>&1; then
-              echo "⚠️ Warning: Response doesn't contain run data"
-              echo "Response: $RUN_DATA"
-              if [ $i -lt $MAX_RETRIES ]; then
-                echo "Retrying in $RETRY_DELAY seconds..."
-                sleep $RETRY_DELAY
-                continue
-              fi
-            fi
-            
-            PR_URL=$(echo "$RUN_DATA" | jq -r '.run.link[0] // empty')
-            
-            if [ -n "$PR_URL" ] && [ "$PR_URL" != "null" ]; then
-              echo "✅ Found PR URL: $PR_URL"
-              break
-            fi
-            
-            if [ $i -lt $MAX_RETRIES ]; then
-              echo "PR URL not found yet. Retrying in $RETRY_DELAY seconds..."
-              sleep $RETRY_DELAY
-            else
-              echo "❌ Error: Could not find PR URL in run links after $MAX_RETRIES attempts"
-              echo "Run links: $(echo "$RUN_DATA" | jq -r '.run.link')"
-              echo "Run status: $(echo "$RUN_DATA" | jq -r '.run.status')"
-              exit 1
-            fi
-          done
+          # Get provisioning request entity
+          ENTITY_DATA=$(curl -s -X GET "https://api.getport.io/v1/entities/provisioningRequest/${{ env.PORT_RUN_ID }}" \
+            -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
+          
+          # Get PR URL from mirror property (which comes from pull_request.link relation)
+          PR_URL=$(echo "$ENTITY_DATA" | jq -r '.properties.pr_url // empty')
+          
+          if [ -z "$PR_URL" ] || [ "$PR_URL" == "null" ]; then
+            echo "❌ Error: Could not find PR URL in blueprint entity (mirror property)"
+            echo "Entity data: $ENTITY_DATA"
+            exit 1
+          fi
+          
+          # Get approver from Port run
+          RUN_DATA=$(curl -s -X GET "https://api.getport.io/v2/actions/runs/${{ env.PORT_RUN_ID }}" \
+            -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
+          
+          APPROVER_ID=$(echo "$RUN_DATA" | jq -r '.run.approvedBy[0] // empty')
+          
+          echo "✅ Found PR URL: $PR_URL"
+          if [ -n "$APPROVER_ID" ] && [ "$APPROVER_ID" != "null" ]; then
+            echo "✅ Found approver: $APPROVER_ID"
+          fi
           
           echo "PR_URL=$PR_URL" >> $GITHUB_ENV
+          echo "APPROVER_ID=$APPROVER_ID" >> $GITHUB_ENV
           echo "::set-output name=PR_URL::$PR_URL"
+          echo "::set-output name=APPROVER_ID::$APPROVER_ID"
+
+      - name: Update provisioning request with approver
+        run: |
+          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          
+          APPROVER_ID="${{ env.APPROVER_ID }}"
+          
+          if [ -n "$APPROVER_ID" ] && [ "$APPROVER_ID" != "null" ]; then
+            curl -s -X PATCH "https://api.getport.io/v1/entities/provisioningRequest/${{ env.PORT_RUN_ID }}" \
+              -H "Authorization: Bearer $PORT_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"relations\": {
+                  \"approver\": \"$APPROVER_ID\"
+                },
+                \"properties\": {
+                  \"status\": \"approved\"
+                }
+              }" | jq '.'
+            
+            echo "✅ Updated provisioning request with approver"
+          fi
 
       - name: Extract PR number from URL
         id: extract_pr_number
