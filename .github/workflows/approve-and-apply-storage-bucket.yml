@@ -1,0 +1,127 @@
+name: Approve and Apply Storage Bucket
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_url:
+        description: 'Pull Request URL to approve and merge'
+        required: true
+      bucket_name:
+        description: 'GCP Storage Bucket name'
+        required: true
+      project_id:
+        description: 'GCP Project ID'
+        required: true
+      original_run_id:
+        description: 'Original Port action run ID to update'
+        required: true
+      port_context:
+        description: 'Port context object (includes runId)'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+env:
+  TF_REPO: matar-Port-demo/create-iam-role
+  BASE_TF_DIR: resources
+  MAIN_BRANCH: main
+
+jobs:
+  approve-and-apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract PR number from URL
+        id: extract_pr
+        run: |
+          PR_URL="${{ github.event.inputs.pr_url }}"
+          PR_NUMBER=$(echo "$PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          echo "::set-output name=PR_NUMBER::$PR_NUMBER"
+
+      - name: Log approval start to original run
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ github.event.inputs.original_run_id }}
+          logMessage: "✅ PR approved! Starting merge and Terraform apply..."
+
+      - name: Checkout Terraform Repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.TF_REPO }}
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Merge Pull Request
+        run: |
+          gh pr merge ${{ env.PR_NUMBER }} --admin --squash
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Log merge completion
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ github.event.inputs.original_run_id }}
+          logMessage: "🔀 PR merged successfully"
+
+      - name: Pull latest main branch
+        run: |
+          git checkout main
+          git pull origin main
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.7
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Log Terraform apply start
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ github.event.inputs.original_run_id }}
+          logMessage: "🔧 Starting Terraform apply for bucket `${{ github.event.inputs.bucket_name }}`"
+
+      - name: Terraform Init & Apply
+        env:
+          GOOGLE_PROJECT: ${{ github.event.inputs.project_id }}
+        run: |
+          BUCKET_NAME="${{ github.event.inputs.bucket_name }}"
+          TF_DIR="${{ env.BASE_TF_DIR }}/$BUCKET_NAME"
+          cd "$TF_DIR"
+          terraform init
+          terraform plan
+          terraform apply -auto-approve
+
+      - name: Finalize original run
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ github.event.inputs.original_run_id }}
+          status: "SUCCESS"
+          summary: "✅ GCP storage bucket `${{ github.event.inputs.bucket_name }}` created successfully"
+          logMessage: "🌍 Terraform applied successfully. Bucket is ready!"
+          link: "[\"https://console.cloud.google.com/storage/browser/${{ github.event.inputs.bucket_name }}?project=${{ github.event.inputs.project_id }}\", \"${{ github.event.inputs.pr_url }}\"]"
+
