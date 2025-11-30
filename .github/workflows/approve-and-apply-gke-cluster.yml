@@ -34,11 +34,11 @@ jobs:
         id: extract_run_id_and_approver
         run: |
           PORT_RUN_ID="${{ fromJson(github.event.inputs.port_context).runId }}"
-          APPROVER_ID="${{ fromJson(github.event.inputs.port_context).approverId }}"
+          APPROVER_EMAIL="${{ fromJson(github.event.inputs.port_context).approverEmail }}"
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
-          echo "APPROVER_ID=$APPROVER_ID" >> $GITHUB_ENV
+          echo "APPROVER_EMAIL=$APPROVER_EMAIL" >> $GITHUB_ENV
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
-          echo "::set-output name=APPROVER_ID::$APPROVER_ID"
+          echo "::set-output name=APPROVER_EMAIL::$APPROVER_EMAIL"
 
       - name: Get PR URL from Port run and extract approver
         id: get_pr_and_approver
@@ -69,19 +69,19 @@ jobs:
       - name: Build approver relations JSON
         id: build_approver_relations
         run: |
-          APPROVER_ID="${{ env.APPROVER_ID }}"
+          APPROVER_EMAIL="${{ env.APPROVER_EMAIL }}"
           
           # Build relations JSON (only approver if available)
           RELATIONS_JSON=$(jq -n \
-            --arg approver_id "$APPROVER_ID" \
-            'if $approver_id != "" and $approver_id != "null" then {"approver": $approver_id} else {} end')
+            --arg approver_email "$APPROVER_EMAIL" \
+            'if $approver_email != "" and $approver_email != "null" then {"approver": $approver_email} else {} end')
           
           echo "RELATIONS_JSON<<EOF" >> $GITHUB_OUTPUT
           echo "$RELATIONS_JSON" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Update provisioning request with approver
-        if: env.APPROVER_ID != '' && env.APPROVER_ID != 'null'
+        if: env.APPROVER_EMAIL != '' && env.APPROVER_EMAIL != 'null'
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}

@@ -61,7 +61,7 @@
       "region": "{{ .inputs.region }}",
       "port_context": {
         "runId": "{{ .run.id }}",
-        "approverId": "{{ .trigger.by.user.id }}"
+        "approverEmail": "{{ .trigger.by.user.email }}"
       }
     },
     "reportWorkflowStatus": true

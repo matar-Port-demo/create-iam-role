@@ -29,7 +29,7 @@
       "machine_type": "{{ .event.diff.after.properties.machine_type }}",
       "port_context": {
         "runId": "{{ .event.diff.after.id }}",
-        "requestorId": "{{ .trigger.by.user.id }}"
+        "requestorEmail": "{{ .trigger.by.user.email }}"
       }
     },
     "reportWorkflowStatus": true
