@@ -230,13 +230,11 @@ jobs:
             
             Please review the plan above and approve this action to proceed with cluster creation.
 
-      - name: Build Terraform plan markdown
-        id: build_plan_markdown
+      - name: Build Terraform plan properties
+        id: build_plan_properties
         run: |
           PLAN_OUTPUT='${{ env.PLAN_OUTPUT }}'
-          PLAN_MARKDOWN=$(jq -n --arg plan "$PLAN_OUTPUT" '"```\n" + $plan + "\n```"')
-          
-          PROPERTIES_JSON=$(jq -n --arg markdown "$PLAN_MARKDOWN" '{"terraform_plan": $markdown}')
+          PROPERTIES_JSON=$(jq -n --arg plan "$PLAN_OUTPUT" '{"terraform_plan": ("```\n" + $plan + "\n```")}')
           
           echo "PROPERTIES_JSON<<EOF" >> $GITHUB_OUTPUT
           echo "$PROPERTIES_JSON" >> $GITHUB_OUTPUT
@@ -252,7 +250,7 @@ jobs:
           identifier: ${{ env.PORT_RUN_ID }}
           blueprint: provisioningRequest
           runId: ${{ env.PORT_RUN_ID }}
-          properties: ${{ steps.build_plan_markdown.outputs.PROPERTIES_JSON }}
+          properties: ${{ steps.build_plan_properties.outputs.PROPERTIES_JSON }}
 
       # NOTE: Actual Terraform plan/apply is commented out since GCP account is not available
       # Uncomment the following steps when GCP credentials are configured:
