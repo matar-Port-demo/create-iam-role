@@ -1,0 +1,56 @@
+{
+  "identifier": "create_gcp_storage_bucket_with_approval",
+  "title": "Create GCP Storage Bucket",
+  "description": "Create a GCP storage bucket - PR is created immediately, then waits for approval before merging and applying",
+  "icon": "GCP",
+  "trigger": {
+    "type": "self-service",
+    "operation": "CREATE",
+    "userInputs": {
+      "properties": {
+        "bucket_name": {
+          "type": "string",
+          "title": "Bucket Name",
+          "description": "The name of the GCP Storage bucket to create"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "GCP Project ID",
+          "description": "The GCP project ID where the bucket will be created"
+        },
+        "location": {
+          "type": "string",
+          "title": "Bucket Location",
+          "description": "The location/region for the bucket (e.g., us-central1, us-east1)",
+          "default": "us-central1"
+        }
+      },
+      "required": [
+        "bucket_name",
+        "project_id",
+        "location"
+      ]
+    },
+    "actionCardButtonText": "Create Storage Bucket",
+    "executeActionButtonText": "Create Storage Bucket"
+  },
+  "invocationMethod": {
+    "type": "GITHUB",
+    "org": "matar-Port-demo",
+    "repo": "create-iam-role",
+    "workflow": ".github/workflows/approve-and-apply-storage-bucket.yml",
+    "workflowInputs": {
+      "bucket_name": "{{ .inputs.bucket_name }}",
+      "project_id": "{{ .inputs.project_id }}",
+      "port_context": {
+        "runId": "{{ .run.id }}"
+      }
+    },
+    "reportWorkflowStatus": true
+  },
+  "requiredApproval": {
+    "type": "ANY"
+  },
+  "publish": true
+}
+

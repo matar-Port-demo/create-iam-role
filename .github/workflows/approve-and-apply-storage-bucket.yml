@@ -3,17 +3,11 @@ name: Approve and Apply Storage Bucket
 on:
   workflow_dispatch:
     inputs:
-      pr_url:
-        description: 'Pull Request URL to approve and merge'
-        required: true
       bucket_name:
         description: 'GCP Storage Bucket name'
         required: true
       project_id:
         description: 'GCP Project ID'
-        required: true
-      original_run_id:
-        description: 'Original Port action run ID to update'
         required: true
       port_context:
         description: 'Port context object (includes runId)'
@@ -36,43 +30,64 @@ jobs:
       - name: Extract Port Run ID
         id: extract_run_id
         run: |
-          PORT_RUN_ID=$(echo '${{ github.event.inputs.port_context }}' | jq -r '.runId')
+          PORT_CONTEXT_JSON='${{ github.event.inputs.port_context }}'
+          PORT_RUN_ID=$(echo "$PORT_CONTEXT_JSON" | jq -r '.runId // empty')
+          
+          if [ -z "$PORT_RUN_ID" ] || [ "$PORT_RUN_ID" == "null" ]; then
+            echo "❌ Error: Could not extract runId from port_context"
+            echo "port_context value: $PORT_CONTEXT_JSON"
+            exit 1
+          fi
+          
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
 
-      - name: Get PR URL from Port run
+      - name: Get PR URL from Port run (with retry)
         id: get_pr_url
         run: |
-          # Use provided PR URL if available, otherwise fetch from Port run
-          if [ -n "${{ github.event.inputs.pr_url }}" ] && [ "${{ github.event.inputs.pr_url }}" != "null" ]; then
-            PR_URL="${{ github.event.inputs.pr_url }}"
-            echo "Using provided PR URL: $PR_URL"
-          else
-            echo "Fetching PR URL from Port run ${{ env.PORT_RUN_ID }}..."
-            PORT_ACCESS_TOKEN=$(curl -X POST "https://api.getport.io/v1/auth/access_token" \
-              -H "Content-Type: application/json" \
-              -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          
+          MAX_RETRIES=5
+          RETRY_DELAY=3
+          PR_URL=""
+          
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i/$MAX_RETRIES: Fetching PR URL from Port run ${{ env.PORT_RUN_ID }}..."
             
-            RUN_DATA=$(curl -X GET "https://api.getport.io/v1/actions/runs/${{ env.PORT_RUN_ID }}" \
+            RUN_DATA=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/${{ env.PORT_RUN_ID }}" \
               -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
             
             # Check if run exists
             if echo "$RUN_DATA" | jq -e '.ok == false' > /dev/null; then
               echo "❌ Error: Run not found"
-              echo "Run data: $RUN_DATA"
-              exit 1
+              echo "Error message: $(echo "$RUN_DATA" | jq -r '.message')"
+              if [ $i -eq $MAX_RETRIES ]; then
+                exit 1
+              fi
+              echo "Retrying in $RETRY_DELAY seconds..."
+              sleep $RETRY_DELAY
+              continue
             fi
             
             PR_URL=$(echo "$RUN_DATA" | jq -r '.run.link[0] // empty')
             
-            if [ -z "$PR_URL" ] || [ "$PR_URL" == "null" ]; then
-              echo "❌ Error: Could not find PR URL in run links"
+            if [ -n "$PR_URL" ] && [ "$PR_URL" != "null" ]; then
+              echo "✅ Found PR URL: $PR_URL"
+              break
+            fi
+            
+            if [ $i -lt $MAX_RETRIES ]; then
+              echo "PR URL not found yet. Retrying in $RETRY_DELAY seconds..."
+              sleep $RETRY_DELAY
+            else
+              echo "❌ Error: Could not find PR URL in run links after $MAX_RETRIES attempts"
               echo "Run links: $(echo "$RUN_DATA" | jq -r '.run.link')"
-              echo "Full run data: $RUN_DATA"
+              echo "Run status: $(echo "$RUN_DATA" | jq -r '.run.status')"
               exit 1
             fi
-            echo "✅ Fetched PR URL from Port: $PR_URL"
-          fi
+          done
           
           echo "PR_URL=$PR_URL" >> $GITHUB_ENV
           echo "::set-output name=PR_URL::$PR_URL"
