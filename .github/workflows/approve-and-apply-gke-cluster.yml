@@ -254,18 +254,19 @@ jobs:
       - name: Build properties JSON with resource details
         id: build_properties
         run: |
-          RESOURCE_DETAILS='${{ steps.build_resource_details.outputs.RESOURCE_DETAILS }}'
-          
+          # RESOURCE_DETAILS is already a JSON string, use it as a string value
           PROPERTIES_JSON=$(jq -n \
-            --argjson resource "$RESOURCE_DETAILS" \
+            --arg resource_str "$RESOURCE_DETAILS" \
             '{
               "status": "completed",
-              "terraform_resource": $resource
+              "terraform_resource": $resource_str
             }')
           
           echo "PROPERTIES_JSON<<EOF" >> $GITHUB_OUTPUT
           echo "$PROPERTIES_JSON" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          RESOURCE_DETAILS: ${{ steps.build_resource_details.outputs.RESOURCE_DETAILS }}
 
       - name: Update provisioning request with completed status and resource
         uses: port-labs/port-github-action@v1
