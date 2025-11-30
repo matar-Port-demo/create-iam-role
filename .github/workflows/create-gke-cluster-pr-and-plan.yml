@@ -233,12 +233,18 @@ jobs:
       - name: Build Terraform plan properties
         id: build_plan_properties
         run: |
-          PLAN_OUTPUT='${{ env.PLAN_OUTPUT }}'
-          PROPERTIES_JSON=$(jq -n --arg plan "$PLAN_OUTPUT" '{"terraform_plan": ("```\n" + $plan + "\n```")}')
+          # Build markdown with code fence - use single quotes to prevent bash from interpreting backticks
+          CODE_FENCE='```'
+          PLAN_MARKDOWN="${CODE_FENCE}"$'\n'"${PLAN_OUTPUT}"$'\n'"${CODE_FENCE}"
+          
+          # Use jq to properly escape and build JSON
+          PROPERTIES_JSON=$(jq -n --arg markdown "$PLAN_MARKDOWN" '{"terraform_plan": $markdown}')
           
           echo "PROPERTIES_JSON<<EOF" >> $GITHUB_OUTPUT
           echo "$PROPERTIES_JSON" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          PLAN_OUTPUT: ${{ env.PLAN_OUTPUT }}
 
       - name: Save Terraform plan to provisioning request entity
         uses: port-labs/port-github-action@v1
