@@ -40,25 +40,28 @@ jobs:
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
           echo "::set-output name=APPROVER_EMAIL::$APPROVER_EMAIL"
 
-      - name: Get PR URL from Port run and extract approver
-        id: get_pr_and_approver
+      - name: Get PR URL from provisioning request entity
+        id: get_pr_url
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: GET
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+        
+      - name: Extract PR URL
+        id: extract_pr_url
         run: |
-          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
-            -H "Content-Type: application/json" \
-            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          ENTITY='${{ steps.get_pr_url.outputs.entity }}'
           
-          echo "Fetching Port run with ID: ${{ env.PORT_RUN_ID }}"
-          
-          # Get run details to extract PR URL from link
-          RUN_DATA=$(curl -s -X GET "https://api.getport.io/v2/actions/runs/${{ env.PORT_RUN_ID }}" \
-            -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
-          
-          # Get PR URL from run link (first link)
-          PR_URL=$(echo "$RUN_DATA" | jq -r '.run.link[0] // empty')
+          # Extract pr_url from entity properties
+          PR_URL=$(echo "$ENTITY" | jq -r '.properties.pr_url // empty')
           
           if [ -z "$PR_URL" ] || [ "$PR_URL" == "null" ]; then
-            echo "❌ Error: Could not find PR URL in Port run link"
-            echo "Run data: $RUN_DATA"
+            echo "❌ Error: Could not find PR URL in provisioning request entity"
+            echo "Entity data: $ENTITY"
             exit 1
           fi
           
