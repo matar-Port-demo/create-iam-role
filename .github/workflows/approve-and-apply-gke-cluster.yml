@@ -156,21 +156,6 @@ jobs:
           git checkout main
           git pull origin main
 
-      - name: Update provisioning request status to applying
-        uses: port-labs/port-github-action@v1
-        with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
-          operation: UPSERT
-          identifier: ${{ env.PORT_RUN_ID }}
-          blueprint: provisioningRequest
-          runId: ${{ env.PORT_RUN_ID }}
-          properties: |
-            {
-              "status": "applying"
-            }
-
       - name: Generate Mock Terraform Apply Output
         id: mock_apply
         run: |
