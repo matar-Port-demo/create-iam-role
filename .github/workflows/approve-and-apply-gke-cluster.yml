@@ -54,20 +54,20 @@ jobs:
       - name: Extract PR URL
         id: extract_pr_url
         run: |
-          ENTITY='${{ steps.get_pr_url.outputs.entity }}'
-          
-          # Extract pr_url from entity properties
-          PR_URL=$(echo "$ENTITY" | jq -r '.properties.pr_url // empty')
+          # Parse entity JSON and extract pr_url
+          PR_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.pr_url // empty')
           
           if [ -z "$PR_URL" ] || [ "$PR_URL" == "null" ]; then
             echo "❌ Error: Could not find PR URL in provisioning request entity"
-            echo "Entity data: $ENTITY"
+            echo "Entity JSON: $ENTITY_JSON"
             exit 1
           fi
           
           echo "✅ Found PR URL: $PR_URL"
           echo "PR_URL=$PR_URL" >> $GITHUB_ENV
           echo "::set-output name=PR_URL::$PR_URL"
+        env:
+          ENTITY_JSON: ${{ steps.get_pr_url.outputs.entity }}
 
       - name: Build approver relations JSON
         id: build_approver_relations
