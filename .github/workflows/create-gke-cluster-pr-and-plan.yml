@@ -95,7 +95,19 @@ jobs:
           title: "Create GKE cluster ${{ github.event.inputs.cluster_name }}"
           body: "This PR adds a GKE cluster via Terraform. **Waiting for approval in Port.**"
 
-      - name: Log PR creation to Port
+      - name: Log PR creation to Port (without link)
+        if: steps.create_pr.outputs.pull-request-url == ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "📥 PR creation in progress..."
+
+      - name: Log PR creation to Port (with link)
+        if: steps.create_pr.outputs.pull-request-url != ''
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
