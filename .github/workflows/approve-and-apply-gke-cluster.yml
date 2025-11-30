@@ -30,84 +30,72 @@ jobs:
   approve-and-apply:
     runs-on: ubuntu-latest
     steps:
-      - name: Extract Port Run ID
-        id: extract_run_id
+      - name: Extract Port Run ID and Approver
+        id: extract_run_id_and_approver
         run: |
-          PORT_CONTEXT_INPUT='${{ github.event.inputs.port_context }}'
-          echo "port_context input: $PORT_CONTEXT_INPUT"
-          PORT_RUN_ID=$(echo "$PORT_CONTEXT_INPUT" | jq -r '.runId')
-          echo "Extracted PORT_RUN_ID: $PORT_RUN_ID"
-          if [ -z "$PORT_RUN_ID" ] || [ "$PORT_RUN_ID" == "null" ]; then
-            echo "❌ Error: Could not extract runId from port_context"
-            echo "port_context value: $PORT_CONTEXT_INPUT"
-            exit 1
-          fi
+          PORT_RUN_ID="${{ fromJson(github.event.inputs.port_context).runId }}"
+          APPROVER_ID="${{ fromJson(github.event.inputs.port_context).approverId }}"
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
+          echo "APPROVER_ID=$APPROVER_ID" >> $GITHUB_ENV
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+          echo "::set-output name=APPROVER_ID::$APPROVER_ID"
 
-      - name: Get PR URL and approver from Port blueprint
+      - name: Get PR URL from Port run and extract approver
         id: get_pr_and_approver
         run: |
           PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
             -H "Content-Type: application/json" \
             -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
           
-          echo "Fetching provisioning request entity with identifier: ${{ env.PORT_RUN_ID }}"
+          echo "Fetching Port run with ID: ${{ env.PORT_RUN_ID }}"
           
-          # Get provisioning request entity
-          ENTITY_DATA=$(curl -s -X GET "https://api.getport.io/v1/entities/provisioningRequest/${{ env.PORT_RUN_ID }}" \
+          # Get run details to extract PR URL from link
+          RUN_DATA=$(curl -s -X GET "https://api.getport.io/v2/actions/runs/${{ env.PORT_RUN_ID }}" \
             -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
           
-          # Get PR URL from mirror property (which comes from pull_request.link relation)
-          PR_URL=$(echo "$ENTITY_DATA" | jq -r '.properties.pr_url // empty')
+          # Get PR URL from run link (first link)
+          PR_URL=$(echo "$RUN_DATA" | jq -r '.run.link[0] // empty')
           
           if [ -z "$PR_URL" ] || [ "$PR_URL" == "null" ]; then
-            echo "❌ Error: Could not find PR URL in blueprint entity (mirror property)"
-            echo "Entity data: $ENTITY_DATA"
+            echo "❌ Error: Could not find PR URL in Port run link"
+            echo "Run data: $RUN_DATA"
             exit 1
           fi
           
-          # Get approver from port_context
-          PORT_CONTEXT_INPUT='${{ github.event.inputs.port_context }}'
-          APPROVER_ID=$(echo "$PORT_CONTEXT_INPUT" | jq -r '.approverId // empty')
-          
-          if [ -z "$APPROVER_ID" ] || [ "$APPROVER_ID" == "null" ]; then
-            echo "⚠️ Warning: Approver ID not found in port_context"
-            APPROVER_ID=""
-          else
-            echo "✅ Found approver ID: $APPROVER_ID"
-          fi
-          
           echo "✅ Found PR URL: $PR_URL"
-          
           echo "PR_URL=$PR_URL" >> $GITHUB_ENV
-          echo "APPROVER_ID=$APPROVER_ID" >> $GITHUB_ENV
           echo "::set-output name=PR_URL::$PR_URL"
-          echo "::set-output name=APPROVER_ID::$APPROVER_ID"
 
-      - name: Update provisioning request with approver
+      - name: Build approver relations JSON
+        id: build_approver_relations
         run: |
-          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
-            -H "Content-Type: application/json" \
-            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
-          
           APPROVER_ID="${{ env.APPROVER_ID }}"
           
-          if [ -n "$APPROVER_ID" ] && [ "$APPROVER_ID" != "null" ]; then
-            curl -s -X PATCH "https://api.getport.io/v1/entities/provisioningRequest/${{ env.PORT_RUN_ID }}" \
-              -H "Authorization: Bearer $PORT_ACCESS_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{
-                \"relations\": {
-                  \"approver\": \"$APPROVER_ID\"
-                },
-                \"properties\": {
-                  \"status\": \"approved\"
-                }
-              }" | jq '.'
-            
-            echo "✅ Updated provisioning request with approver"
-          fi
+          # Build relations JSON (only approver if available)
+          RELATIONS_JSON=$(jq -n \
+            --arg approver_id "$APPROVER_ID" \
+            'if $approver_id != "" and $approver_id != "null" then {"approver": $approver_id} else {} end')
+          
+          echo "RELATIONS_JSON<<EOF" >> $GITHUB_OUTPUT
+          echo "$RELATIONS_JSON" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Update provisioning request with approver
+        if: env.APPROVER_ID != '' && env.APPROVER_ID != 'null'
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: |
+            {
+              "status": "approved"
+            }
+          relations: ${{ steps.build_approver_relations.outputs.RELATIONS_JSON }}
 
       - name: Extract PR number from URL
         id: extract_pr_number
