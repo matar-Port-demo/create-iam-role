@@ -83,8 +83,7 @@ jobs:
           echo "$RELATIONS_JSON" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Update provisioning request with approver
-        if: env.APPROVER_EMAIL != '' && env.APPROVER_EMAIL != 'null'
+      - name: Update provisioning request status to approved
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -98,6 +97,18 @@ jobs:
             {
               "status": "approved"
             }
+
+      - name: Update provisioning request with approver relation
+        if: env.APPROVER_EMAIL != '' && env.APPROVER_EMAIL != 'null'
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+          runId: ${{ env.PORT_RUN_ID }}
           relations: ${{ steps.build_approver_relations.outputs.RELATIONS_JSON }}
 
       - name: Extract PR number from URL
@@ -144,6 +155,21 @@ jobs:
         run: |
           git checkout main
           git pull origin main
+
+      - name: Update provisioning request status to applying
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: |
+            {
+              "status": "applying"
+            }
 
       - name: Generate Mock Terraform Apply Output
         id: mock_apply
