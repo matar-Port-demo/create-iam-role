@@ -33,6 +33,13 @@ jobs:
   approve-and-apply:
     runs-on: ubuntu-latest
     steps:
+      - name: Extract Port Run ID
+        id: extract_run_id
+        run: |
+          PORT_RUN_ID=$(echo '${{ github.event.inputs.port_context }}' | jq -r '.runId')
+          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
+          echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+
       - name: Get PR URL from Port run
         id: get_pr_url
         run: |
@@ -41,22 +48,30 @@ jobs:
             PR_URL="${{ github.event.inputs.pr_url }}"
             echo "Using provided PR URL: $PR_URL"
           else
-            echo "Fetching PR URL from Port run..."
+            echo "Fetching PR URL from Port run ${{ env.PORT_RUN_ID }}..."
             PORT_ACCESS_TOKEN=$(curl -X POST "https://api.getport.io/v1/auth/access_token" \
               -H "Content-Type: application/json" \
               -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
             
-            RUN_DATA=$(curl -X GET "https://api.getport.io/v1/actions/runs/${{ github.event.inputs.original_run_id }}" \
+            RUN_DATA=$(curl -X GET "https://api.getport.io/v1/actions/runs/${{ env.PORT_RUN_ID }}" \
               -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
+            
+            # Check if run exists
+            if echo "$RUN_DATA" | jq -e '.ok == false' > /dev/null; then
+              echo "❌ Error: Run not found"
+              echo "Run data: $RUN_DATA"
+              exit 1
+            fi
             
             PR_URL=$(echo "$RUN_DATA" | jq -r '.run.link[0] // empty')
             
             if [ -z "$PR_URL" ] || [ "$PR_URL" == "null" ]; then
               echo "❌ Error: Could not find PR URL in run links"
-              echo "Run data: $RUN_DATA"
+              echo "Run links: $(echo "$RUN_DATA" | jq -r '.run.link')"
+              echo "Full run data: $RUN_DATA"
               exit 1
             fi
-            echo "Fetched PR URL from Port: $PR_URL"
+            echo "✅ Fetched PR URL from Port: $PR_URL"
           fi
           
           echo "PR_URL=$PR_URL" >> $GITHUB_ENV
@@ -77,7 +92,7 @@ jobs:
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
-          runId: ${{ github.event.inputs.original_run_id }}
+          runId: ${{ env.PORT_RUN_ID }}
           logMessage: "✅ PR approved! Starting merge and Terraform apply..."
 
       - name: Checkout Terraform Repo
@@ -99,7 +114,7 @@ jobs:
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
-          runId: ${{ github.event.inputs.original_run_id }}
+          runId: ${{ env.PORT_RUN_ID }}
           logMessage: "🔀 PR merged successfully"
 
       - name: Pull latest main branch
@@ -127,7 +142,7 @@ jobs:
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
-          runId: ${{ github.event.inputs.original_run_id }}
+          runId: ${{ env.PORT_RUN_ID }}
           logMessage: "🔧 Starting Terraform apply for bucket `${{ github.event.inputs.bucket_name }}`"
 
       - name: Terraform Init & Apply
@@ -148,7 +163,7 @@ jobs:
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
-          runId: ${{ github.event.inputs.original_run_id }}
+          runId: ${{ env.PORT_RUN_ID }}
           status: "SUCCESS"
           summary: "✅ GCP storage bucket `${{ github.event.inputs.bucket_name }}` created successfully"
           logMessage: "🌍 Terraform applied successfully. Bucket is ready!"
