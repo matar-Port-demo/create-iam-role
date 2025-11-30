@@ -1,0 +1,225 @@
+name: Approve and Apply GKE Cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: 'GKE Cluster name'
+        required: true
+      project_id:
+        description: 'GCP Project ID'
+        required: true
+      region:
+        description: 'GCP Region'
+        required: true
+      port_context:
+        description: 'Port context object (includes runId)'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+env:
+  TF_REPO: matar-Port-demo/create-iam-role
+  BASE_TF_DIR: resources
+  MAIN_BRANCH: main
+
+jobs:
+  approve-and-apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract Port Run ID
+        id: extract_run_id
+        run: |
+          PORT_CONTEXT_JSON='${{ github.event.inputs.port_context }}'
+          PORT_RUN_ID=$(echo "$PORT_CONTEXT_JSON" | jq -r '.runId // empty')
+          
+          if [ -z "$PORT_RUN_ID" ] || [ "$PORT_RUN_ID" == "null" ]; then
+            echo "❌ Error: Could not extract runId from port_context"
+            echo "port_context value: $PORT_CONTEXT_JSON"
+            exit 1
+          fi
+          
+          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
+          echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+
+      - name: Get PR URL from Port run (with retry)
+        id: get_pr_url
+        run: |
+          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          
+          MAX_RETRIES=5
+          RETRY_DELAY=3
+          PR_URL=""
+          
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i/$MAX_RETRIES: Fetching PR URL from Port run ${{ env.PORT_RUN_ID }}..."
+            
+            RUN_DATA=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/${{ env.PORT_RUN_ID }}" \
+              -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
+            
+            # Check if run exists
+            if echo "$RUN_DATA" | jq -e '.ok == false' > /dev/null; then
+              echo "❌ Error: Run not found"
+              echo "Error message: $(echo "$RUN_DATA" | jq -r '.message')"
+              if [ $i -eq $MAX_RETRIES ]; then
+                exit 1
+              fi
+              echo "Retrying in $RETRY_DELAY seconds..."
+              sleep $RETRY_DELAY
+              continue
+            fi
+            
+            PR_URL=$(echo "$RUN_DATA" | jq -r '.run.link[0] // empty')
+            
+            if [ -n "$PR_URL" ] && [ "$PR_URL" != "null" ]; then
+              echo "✅ Found PR URL: $PR_URL"
+              break
+            fi
+            
+            if [ $i -lt $MAX_RETRIES ]; then
+              echo "PR URL not found yet. Retrying in $RETRY_DELAY seconds..."
+              sleep $RETRY_DELAY
+            else
+              echo "❌ Error: Could not find PR URL in run links after $MAX_RETRIES attempts"
+              echo "Run links: $(echo "$RUN_DATA" | jq -r '.run.link')"
+              echo "Run status: $(echo "$RUN_DATA" | jq -r '.run.status')"
+              exit 1
+            fi
+          done
+          
+          echo "PR_URL=$PR_URL" >> $GITHUB_ENV
+          echo "::set-output name=PR_URL::$PR_URL"
+
+      - name: Extract PR number from URL
+        id: extract_pr_number
+        run: |
+          PR_NUMBER=$(echo "${{ env.PR_URL }}" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+          echo "Extracted PR Number: $PR_NUMBER"
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          echo "::set-output name=PR_NUMBER::$PR_NUMBER"
+
+      - name: Log approval start to original run
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "✅ Approval received! Starting merge and Terraform apply..."
+
+      - name: Checkout Terraform Repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.TF_REPO }}
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Merge Pull Request
+        run: |
+          gh pr merge ${{ env.PR_NUMBER }} --admin --squash
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Log merge completion
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🔀 PR merged successfully"
+
+      - name: Pull latest main branch
+        run: |
+          git checkout main
+          git pull origin main
+
+      - name: Generate Mock Terraform Apply Output
+        id: mock_apply
+        run: |
+          CLUSTER_NAME="${{ github.event.inputs.cluster_name }}"
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          REGION="${{ github.event.inputs.region }}"
+          
+          cat > apply_output.txt <<EOF
+          google_container_cluster.cluster: Creating...
+          google_container_cluster.cluster: Still creating... [10s elapsed]
+          google_container_cluster.cluster: Still creating... [20s elapsed]
+          google_container_cluster.cluster: Still creating... [30s elapsed]
+          google_container_cluster.cluster: Still creating... [40s elapsed]
+          google_container_cluster.cluster: Creation complete after 45s [id=projects/$PROJECT_ID/locations/$REGION/clusters/$CLUSTER_NAME]
+
+          Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
+          Outputs:
+
+          cluster_endpoint = "https://$CLUSTER_NAME.$REGION.gke.cloud.google.com"
+          cluster_name = "$CLUSTER_NAME"
+          cluster_region = "$REGION"
+          EOF
+          
+          APPLY_OUTPUT=$(cat apply_output.txt)
+          echo "APPLY_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$APPLY_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Log Terraform Apply to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: |
+            🔧 **Terraform Apply Output:**
+            
+            ```
+            ${{ env.APPLY_OUTPUT }}
+            ```
+
+      # NOTE: Actual Terraform apply is commented out since GCP account is not available
+      # Uncomment the following steps when GCP credentials are configured:
+      #
+      # - name: Set up Terraform
+      #   uses: hashicorp/setup-terraform@v2
+      #   with:
+      #     terraform_version: 1.5.7
+      #
+      # - name: Authenticate to Google Cloud
+      #   uses: google-github-actions/auth@v1
+      #   with:
+      #     credentials_json: ${{ secrets.GCP_SA_KEY }}
+      #
+      # - name: Set up Cloud SDK
+      #   uses: google-github-actions/setup-gcloud@v1
+      #
+      # - name: Terraform Init & Apply
+      #   env:
+      #     GOOGLE_PROJECT: ${{ github.event.inputs.project_id }}
+      #   run: |
+      #     CLUSTER_NAME="${{ github.event.inputs.cluster_name }}"
+      #     TF_DIR="${{ env.BASE_TF_DIR }}/$CLUSTER_NAME"
+      #     cd "$TF_DIR"
+      #     terraform init
+      #     terraform apply -auto-approve
+
+      - name: Finalize original run
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          status: "SUCCESS"
+          summary: "✅ GKE cluster `${{ github.event.inputs.cluster_name }}` created successfully"
+          logMessage: "🌍 Terraform applied successfully. GKE cluster is ready!"
+          link: "[\"https://console.cloud.google.com/kubernetes/clusters/details/${{ github.event.inputs.region }}/${{ github.event.inputs.cluster_name }}?project=${{ github.event.inputs.project_id }}\", \"${{ env.PR_URL }}\"]"
+

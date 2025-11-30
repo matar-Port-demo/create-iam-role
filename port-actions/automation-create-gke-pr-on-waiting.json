@@ -1,0 +1,37 @@
+{
+  "identifier": "auto_create_gke_pr_on_waiting_approval",
+  "title": "Auto Create GKE PR When Waiting for Approval",
+  "description": "Automatically creates PR with Terraform plan when GKE cluster action is waiting for approval",
+  "trigger": {
+    "type": "automation",
+    "event": {
+      "type": "RUN_CREATED",
+      "actionIdentifier": "create_gke_cluster"
+    },
+    "condition": {
+      "type": "JQ",
+      "expressions": [
+        ".diff.after.status == \"WAITING_FOR_APPROVAL\""
+      ],
+      "combinator": "and"
+    }
+  },
+  "invocationMethod": {
+    "type": "GITHUB",
+    "org": "matar-Port-demo",
+    "repo": "create-iam-role",
+    "workflow": ".github/workflows/create-gke-cluster-pr-and-plan.yml",
+    "workflowInputs": {
+      "cluster_name": "{{ .event.diff.after.properties.cluster_name }}",
+      "project_id": "{{ .event.diff.after.properties.project_id }}",
+      "region": "{{ .event.diff.after.properties.region }}",
+      "node_count": "{{ .event.diff.after.properties.node_count }}",
+      "machine_type": "{{ .event.diff.after.properties.machine_type }}",
+      "port_context": {
+        "runId": "{{ .event.diff.after.id }}"
+      }
+    },
+    "reportWorkflowStatus": true
+  }
+}
+

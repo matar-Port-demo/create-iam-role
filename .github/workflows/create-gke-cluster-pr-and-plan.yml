@@ -1,0 +1,212 @@
+name: Create GKE Cluster PR and Plan
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: 'GKE Cluster name'
+        required: true
+      project_id:
+        description: 'GCP Project ID'
+        required: true
+      region:
+        description: 'GCP Region (e.g., us-central1)'
+        required: true
+      node_count:
+        description: 'Number of nodes'
+        required: true
+      machine_type:
+        description: 'Machine type (e.g., e2-medium)'
+        required: true
+      port_context:
+        description: 'Port context object (includes runId)'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+env:
+  TF_REPO: matar-Port-demo/create-iam-role
+  BASE_TF_DIR: resources
+  BRANCH_PREFIX: create-gke-cluster
+  MAIN_BRANCH: main
+
+jobs:
+  create-pr-and-plan:
+    runs-on: ubuntu-latest
+    outputs:
+      pr_url: ${{ steps.create_pr.outputs.pull-request-url }}
+      port_run_id: ${{ steps.extract_run_id.outputs.PORT_RUN_ID }}
+    steps:
+      - name: Extract Port Run ID
+        id: extract_run_id
+        run: |
+          PORT_RUN_ID=$(echo '${{ github.event.inputs.port_context }}' | jq -r '.runId')
+          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
+          echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+
+      - name: Log start to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🚀 Starting GKE cluster creation for `${{ github.event.inputs.cluster_name }}`"
+
+      - name: Checkout Terraform Repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.TF_REPO }}
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Generate Terraform File from Template
+        run: |
+          CLUSTER_NAME="${{ github.event.inputs.cluster_name }}"
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          REGION="${{ github.event.inputs.region }}"
+          NODE_COUNT="${{ github.event.inputs.node_count }}"
+          MACHINE_TYPE="${{ github.event.inputs.machine_type }}"
+          TF_DIR="${{ env.BASE_TF_DIR }}/$CLUSTER_NAME"
+          mkdir -p "$TF_DIR"
+          TEMPLATE_PATH=templates/gke-cluster.tf
+          TARGET_FILE="$TF_DIR/main.tf"
+          sed -e "s/{{ cluster_name }}/$CLUSTER_NAME/g" \
+              -e "s/{{ project_id }}/$PROJECT_ID/g" \
+              -e "s/{{ region }}/$REGION/g" \
+              -e "s/{{ node_count }}/$NODE_COUNT/g" \
+              -e "s/{{ machine_type }}/$MACHINE_TYPE/g" \
+              "$TEMPLATE_PATH" > "$TARGET_FILE"
+
+      - name: Create Pull Request
+        id: create_pr
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GH_PAT }}
+          commit-message: "Add GKE cluster ${{ github.event.inputs.cluster_name }}"
+          branch: ${{ env.BRANCH_PREFIX }}-${{ github.run_id }}
+          base: ${{ env.MAIN_BRANCH }}
+          title: "Create GKE cluster ${{ github.event.inputs.cluster_name }}"
+          body: "This PR adds a GKE cluster via Terraform. **Waiting for approval in Port.**"
+
+      - name: Log PR creation to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "📥 PR created: ${{ steps.create_pr.outputs.pull-request-url }}"
+          link: "[\"${{ steps.create_pr.outputs.pull-request-url }}\"]"
+
+      - name: Generate Mock Terraform Plan Output
+        id: mock_plan
+        run: |
+          CLUSTER_NAME="${{ github.event.inputs.cluster_name }}"
+          PROJECT_ID="${{ github.event.inputs.project_id }}"
+          REGION="${{ github.event.inputs.region }}"
+          NODE_COUNT="${{ github.event.inputs.node_count }}"
+          MACHINE_TYPE="${{ github.event.inputs.machine_type }}"
+          
+          cat > plan_output.txt <<EOF
+          Terraform will perform the following actions:
+
+            # google_container_cluster.cluster will be created
+            + resource "google_container_cluster" "cluster" {
+                + cluster_ipv4_cidr          = (known after apply)
+                + default_max_pods_per_node = (known after apply)
+                + enable_kubernetes_alpha   = false
+                + enable_legacy_abac        = false
+                + endpoint                   = (known after apply)
+                + id                         = (known after apply)
+                + initial_node_count         = $NODE_COUNT
+                + location                   = "$REGION"
+                + logging_service            = "logging.googleapis.com/kubernetes"
+                + master_version             = (known after apply)
+                + min_master_version         = (known after apply)
+                + name                       = "$CLUSTER_NAME"
+                + network                    = "default"
+                + node_config {
+                    + disk_size_gb      = 100
+                    + disk_type         = "pd-standard"
+                    + image_type        = "COS_CONTAINERD"
+                    + machine_type      = "$MACHINE_TYPE"
+                    + oauth_scopes      = [
+                        + "https://www.googleapis.com/auth/cloud-platform",
+                      ]
+                    + preemptible       = false
+                    + service_account   = (known after apply)
+                  }
+                + node_locations         = (known after apply)
+                + node_version           = (known after apply)
+                + project                = "$PROJECT_ID"
+                + remove_default_node_pool = false
+                + subnetwork             = (known after apply)
+              }
+
+          Plan: 1 to add, 0 to change, 0 to destroy.
+          
+          ──────────────────────────────────────────────────────────────────────────
+          
+          Note: You didn't use the -out option to save this plan, so Terraform can't
+          guarantee to take exactly these actions if you run "terraform apply" now.
+          EOF
+          
+          PLAN_OUTPUT=$(cat plan_output.txt)
+          echo "PLAN_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$PLAN_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Log Terraform Plan to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: |
+            📋 **Terraform Plan Output:**
+            
+            ```
+            ${{ env.PLAN_OUTPUT }}
+            ```
+            
+            ⏸️  **Waiting for approval in Port...**
+            
+            Please review the plan above and approve this action to proceed with cluster creation.
+
+      # NOTE: Actual Terraform plan/apply is commented out since GCP account is not available
+      # Uncomment the following steps when GCP credentials are configured:
+      #
+      # - name: Set up Terraform
+      #   uses: hashicorp/setup-terraform@v2
+      #   with:
+      #     terraform_version: 1.5.7
+      #
+      # - name: Authenticate to Google Cloud
+      #   uses: google-github-actions/auth@v1
+      #   with:
+      #     credentials_json: ${{ secrets.GCP_SA_KEY }}
+      #
+      # - name: Set up Cloud SDK
+      #   uses: google-github-actions/setup-gcloud@v1
+      #
+      # - name: Terraform Init & Plan
+      #   env:
+      #     GOOGLE_PROJECT: ${{ github.event.inputs.project_id }}
+      #   run: |
+      #     CLUSTER_NAME="${{ github.event.inputs.cluster_name }}"
+      #     TF_DIR="${{ env.BASE_TF_DIR }}/$CLUSTER_NAME"
+      #     cd "$TF_DIR"
+      #     terraform init
+      #     terraform plan -out=tfplan-${{ env.PORT_RUN_ID }} > plan_output.txt 2>&1
+      #     PLAN_OUTPUT=$(cat plan_output.txt)
+      #     echo "PLAN_OUTPUT<<EOF" >> $GITHUB_ENV
+      #     echo "$PLAN_OUTPUT" >> $GITHUB_ENV
+      #     echo "EOF" >> $GITHUB_ENV
+

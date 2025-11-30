@@ -1,0 +1,72 @@
+{
+  "identifier": "create_gke_cluster",
+  "title": "Create GKE Cluster",
+  "description": "Create a GKE cluster - PR is created with Terraform plan, then waits for approval before merging and applying",
+  "icon": "Google",
+  "trigger": {
+    "type": "self-service",
+    "operation": "CREATE",
+    "userInputs": {
+      "properties": {
+        "cluster_name": {
+          "type": "string",
+          "title": "Cluster Name",
+          "description": "The name of the GKE cluster to create"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "GCP Project ID",
+          "description": "The GCP project ID where the cluster will be created"
+        },
+        "region": {
+          "type": "string",
+          "title": "Region",
+          "description": "The GCP region for the cluster (e.g., us-central1, us-east1)",
+          "default": "us-central1"
+        },
+        "node_count": {
+          "type": "number",
+          "title": "Node Count",
+          "description": "Number of nodes in the cluster",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10
+        },
+        "machine_type": {
+          "type": "string",
+          "title": "Machine Type",
+          "description": "The machine type for cluster nodes (e.g., e2-medium, n1-standard-2)",
+          "default": "e2-medium"
+        }
+      },
+      "required": [
+        "cluster_name",
+        "project_id",
+        "region",
+        "node_count",
+        "machine_type"
+      ]
+    },
+    "actionCardButtonText": "Create GKE Cluster",
+    "executeActionButtonText": "Create GKE Cluster"
+  },
+  "invocationMethod": {
+    "type": "GITHUB",
+    "org": "matar-Port-demo",
+    "repo": "create-iam-role",
+    "workflow": ".github/workflows/approve-and-apply-gke-cluster.yml",
+    "workflowInputs": {
+      "cluster_name": "{{ .inputs.cluster_name }}",
+      "project_id": "{{ .inputs.project_id }}",
+      "region": "{{ .inputs.region }}",
+      "port_context": {
+        "runId": "{{ .run.id }}"
+      }
+    },
+    "reportWorkflowStatus": true
+  },
+  "requiredApproval": {
+    "type": "ANY"
+  }
+}
+
