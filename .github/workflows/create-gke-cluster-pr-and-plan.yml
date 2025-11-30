@@ -106,36 +106,6 @@ jobs:
           logMessage: "📥 PR created: ${{ steps.create_pr.outputs.pull-request-url }}"
           link: "[\"${{ steps.create_pr.outputs.pull-request-url }}\"]"
 
-      - name: Extract requestor from port_context
-        id: get_requestor
-        run: |
-          PORT_CONTEXT_INPUT='${{ github.event.inputs.port_context }}'
-          REQUESTOR_ID=$(echo "$PORT_CONTEXT_INPUT" | jq -r '.requestorId // empty')
-          
-          if [ -z "$REQUESTOR_ID" ] || [ "$REQUESTOR_ID" == "null" ]; then
-            echo "⚠️ Warning: Requestor ID not found in port_context"
-            REQUESTOR_ID=""
-          else
-            echo "✅ Extracted requestor ID: $REQUESTOR_ID"
-          fi
-          
-          echo "REQUESTOR_ID=$REQUESTOR_ID" >> $GITHUB_ENV
-          echo "::set-output name=REQUESTOR_ID::$REQUESTOR_ID"
-
-      - name: Build relations JSON
-        id: build_relations
-        run: |
-          REQUESTOR_EMAIL="${{ env.REQUESTOR_EMAIL }}"
-          
-          # Build relations JSON (only requestor if available)
-          RELATIONS_JSON=$(jq -n \
-            --arg requestor_email "$REQUESTOR_EMAIL" \
-            'if $requestor_email != "" and $requestor_email != "null" then {"requestor": $requestor_email} else {} end')
-          
-          echo "RELATIONS_JSON<<EOF" >> $GITHUB_OUTPUT
-          echo "$RELATIONS_JSON" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
       - name: Create provisioning request entity
         uses: port-labs/port-github-action@v1
         with:
@@ -151,9 +121,9 @@ jobs:
             {
               "resource_name": "${{ github.event.inputs.cluster_name }}",
               "resource_type": "GKE Cluster",
-              "status": "waiting_approval"
+              "status": "waiting_approval",
+              "pr_url": "${{ steps.create_pr.outputs.pull-request-url }}"
             }
-          relations: ${{ steps.build_relations.outputs.RELATIONS_JSON }}
 
       - name: Log PR URL to Port run
         uses: port-labs/port-github-action@v1
