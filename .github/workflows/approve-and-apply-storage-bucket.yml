@@ -33,10 +33,39 @@ jobs:
   approve-and-apply:
     runs-on: ubuntu-latest
     steps:
+      - name: Get PR URL from Port run
+        id: get_pr_url
+        run: |
+          # Use provided PR URL if available, otherwise fetch from Port run
+          if [ -n "${{ github.event.inputs.pr_url }}" ] && [ "${{ github.event.inputs.pr_url }}" != "null" ]; then
+            PR_URL="${{ github.event.inputs.pr_url }}"
+            echo "Using provided PR URL: $PR_URL"
+          else
+            echo "Fetching PR URL from Port run..."
+            PORT_ACCESS_TOKEN=$(curl -X POST "https://api.getport.io/v1/auth/access_token" \
+              -H "Content-Type: application/json" \
+              -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+            
+            RUN_DATA=$(curl -X GET "https://api.getport.io/v1/actions/runs/${{ github.event.inputs.original_run_id }}" \
+              -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
+            
+            PR_URL=$(echo "$RUN_DATA" | jq -r '.run.link[0] // empty')
+            
+            if [ -z "$PR_URL" ] || [ "$PR_URL" == "null" ]; then
+              echo "❌ Error: Could not find PR URL in run links"
+              echo "Run data: $RUN_DATA"
+              exit 1
+            fi
+            echo "Fetched PR URL from Port: $PR_URL"
+          fi
+          
+          echo "PR_URL=$PR_URL" >> $GITHUB_ENV
+          echo "::set-output name=PR_URL::$PR_URL"
+
       - name: Extract PR number from URL
         id: extract_pr
         run: |
-          PR_URL="${{ github.event.inputs.pr_url }}"
+          PR_URL="${{ env.PR_URL }}"
           PR_NUMBER=$(echo "$PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
           echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
           echo "::set-output name=PR_NUMBER::$PR_NUMBER"
