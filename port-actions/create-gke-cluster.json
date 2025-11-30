@@ -60,7 +60,8 @@
       "project_id": "{{ .inputs.project_id }}",
       "region": "{{ .inputs.region }}",
       "port_context": {
-        "runId": "{{ .run.id }}"
+        "runId": "{{ .run.id }}",
+        "approverId": "{{ .trigger.by.user.id }}"
       }
     },
     "reportWorkflowStatus": true

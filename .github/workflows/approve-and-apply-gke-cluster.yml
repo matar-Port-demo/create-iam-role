@@ -67,16 +67,18 @@ jobs:
             exit 1
           fi
           
-          # Get approver from Port run
-          RUN_DATA=$(curl -s -X GET "https://api.getport.io/v2/actions/runs/${{ env.PORT_RUN_ID }}" \
-            -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
+          # Get approver from port_context
+          PORT_CONTEXT_INPUT='${{ github.event.inputs.port_context }}'
+          APPROVER_ID=$(echo "$PORT_CONTEXT_INPUT" | jq -r '.approverId // empty')
           
-          APPROVER_ID=$(echo "$RUN_DATA" | jq -r '.run.approvedBy[0] // empty')
+          if [ -z "$APPROVER_ID" ] || [ "$APPROVER_ID" == "null" ]; then
+            echo "⚠️ Warning: Approver ID not found in port_context"
+            APPROVER_ID=""
+          else
+            echo "✅ Found approver ID: $APPROVER_ID"
+          fi
           
           echo "✅ Found PR URL: $PR_URL"
-          if [ -n "$APPROVER_ID" ] && [ "$APPROVER_ID" != "null" ]; then
-            echo "✅ Found approver: $APPROVER_ID"
-          fi
           
           echo "PR_URL=$PR_URL" >> $GITHUB_ENV
           echo "APPROVER_ID=$APPROVER_ID" >> $GITHUB_ENV

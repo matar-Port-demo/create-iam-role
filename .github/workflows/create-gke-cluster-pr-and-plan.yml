@@ -103,17 +103,19 @@ jobs:
           logMessage: "📥 PR created: ${{ steps.create_pr.outputs.pull-request-url }}"
           link: "[\"${{ steps.create_pr.outputs.pull-request-url }}\"]"
 
-      - name: Get requestor from Port run
+      - name: Extract requestor from port_context
         id: get_requestor
         run: |
-          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
-            -H "Content-Type: application/json" \
-            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          PORT_CONTEXT_INPUT='${{ github.event.inputs.port_context }}'
+          REQUESTOR_ID=$(echo "$PORT_CONTEXT_INPUT" | jq -r '.requestorId // empty')
           
-          RUN_DATA=$(curl -s -X GET "https://api.getport.io/v2/actions/runs/${{ env.PORT_RUN_ID }}" \
-            -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
+          if [ -z "$REQUESTOR_ID" ] || [ "$REQUESTOR_ID" == "null" ]; then
+            echo "⚠️ Warning: Requestor ID not found in port_context"
+            REQUESTOR_ID=""
+          else
+            echo "✅ Extracted requestor ID: $REQUESTOR_ID"
+          fi
           
-          REQUESTOR_ID=$(echo "$RUN_DATA" | jq -r '.run.createdBy // empty')
           echo "REQUESTOR_ID=$REQUESTOR_ID" >> $GITHUB_ENV
           echo "::set-output name=REQUESTOR_ID::$REQUESTOR_ID"
 
@@ -163,27 +165,57 @@ jobs:
           PR_ENTITY_ID="${{ env.PR_ENTITY_ID }}"
           REQUESTOR_ID="${{ env.REQUESTOR_ID }}"
           
-          # Build relations object
-          RELATIONS="{\"pull_request\": \"$PR_ENTITY_ID\""
-          if [ -n "$REQUESTOR_ID" ] && [ "$REQUESTOR_ID" != "null" ]; then
-            RELATIONS="$RELATIONS, \"requestor\": \"$REQUESTOR_ID\""
-          fi
-          RELATIONS="$RELATIONS}"
+          echo "Creating entity with:"
+          echo "  Identifier: ${{ env.PORT_RUN_ID }}"
+          echo "  PR Entity ID: $PR_ENTITY_ID"
+          echo "  Requestor ID: $REQUESTOR_ID"
           
-          curl -s -X POST "https://api.getport.io/v1/entities?upsert=true" \
+          # Build relations JSON using jq
+          RELATIONS_JSON=$(jq -n \
+            --arg pr_id "$PR_ENTITY_ID" \
+            --arg requestor_id "$REQUESTOR_ID" \
+            '{
+              "pull_request": $pr_id
+            } + (if $requestor_id != "" and $requestor_id != "null" then {"requestor": $requestor_id} else {} end)')
+          
+          echo "Relations JSON: $RELATIONS_JSON"
+          
+          # Build the full entity JSON
+          ENTITY_JSON=$(jq -n \
+            --arg identifier "${{ env.PORT_RUN_ID }}" \
+            --arg title "GKE Cluster Provisioning: $CLUSTER_NAME" \
+            --arg cluster_name "$CLUSTER_NAME" \
+            --argjson relations "$RELATIONS_JSON" \
+            '{
+              "identifier": $identifier,
+              "title": $title,
+              "blueprint": "provisioningRequest",
+              "properties": {
+                "resource_name": $cluster_name,
+                "resource_type": "GKE Cluster",
+                "status": "waiting_approval"
+              },
+              "relations": $relations
+            }')
+          
+          echo "Entity JSON: $ENTITY_JSON"
+          
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST "https://api.getport.io/v1/entities?upsert=true" \
             -H "Authorization: Bearer $PORT_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"identifier\": \"${{ env.PORT_RUN_ID }}\",
-              \"title\": \"GKE Cluster Provisioning: $CLUSTER_NAME\",
-              \"blueprint\": \"provisioningRequest\",
-              \"properties\": {
-                \"resource_name\": \"$CLUSTER_NAME\",
-                \"resource_type\": \"GKE Cluster\",
-                \"status\": \"waiting_approval\"
-              },
-              \"relations\": $RELATIONS
-            }" | jq '.'
+            -d "$ENTITY_JSON")
+          
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
+          
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response: $BODY"
+          
+          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "201" ]; then
+            echo "❌ Error creating entity. HTTP Status: $HTTP_STATUS"
+            echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+            exit 1
+          fi
           
           echo "✅ Created provisioning request entity with PR relation"
 

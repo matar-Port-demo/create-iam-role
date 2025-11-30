@@ -28,7 +28,8 @@
       "node_count": "{{ .event.diff.after.properties.node_count }}",
       "machine_type": "{{ .event.diff.after.properties.machine_type }}",
       "port_context": {
-        "runId": "{{ .event.diff.after.id }}"
+        "runId": "{{ .event.diff.after.id }}",
+        "requestorId": "{{ .trigger.by.user.id }}"
       }
     },
     "reportWorkflowStatus": true
