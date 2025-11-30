@@ -124,6 +124,10 @@ jobs:
               "status": "waiting_approval",
               "pr_url": "${{ steps.create_pr.outputs.pull-request-url }}"
             }
+          relations: |
+            {
+              "requestor": "${{ env.REQUESTOR_EMAIL }}"
+            }
 
       - name: Log PR URL to Port run
         uses: port-labs/port-github-action@v1
