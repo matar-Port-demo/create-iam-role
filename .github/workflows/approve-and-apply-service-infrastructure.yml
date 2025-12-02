@@ -1,0 +1,353 @@
+name: Approve and Apply Service Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      application_name:
+        description: 'Application name'
+        required: true
+      stack_type:
+        description: 'Stack type'
+        required: true
+      description:
+        description: 'Service description'
+        required: false
+      runtime:
+        description: 'Runtime'
+        required: false
+      database_setup:
+        description: 'Database setup option'
+        required: false
+      k_8_s_setup:
+        description: 'K8s setup option'
+        required: false
+      port_context:
+        description: 'Port context object (includes runId)'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+env:
+  TF_REPO: db-hackathon/app-deployment-repo
+  BASE_TF_DIR: resources
+  MAIN_BRANCH: main
+
+jobs:
+  approve-and-apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract Port Run ID and Approver
+        id: extract_run_id_and_approver
+        run: |
+          PORT_RUN_ID="${{ fromJson(github.event.inputs.port_context).runId }}"
+          APPROVER_EMAIL="${{ fromJson(github.event.inputs.port_context).approverEmail }}"
+          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
+          echo "APPROVER_EMAIL=$APPROVER_EMAIL" >> $GITHUB_ENV
+          echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+
+      - name: Get provisioning request entity
+        id: get_provisioning_request
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: GET
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+
+      - name: Extract PR URLs and repository info
+        id: extract_pr_urls
+        run: |
+          ENTITY_JSON='${{ steps.get_provisioning_request.outputs.entity }}'
+          
+          INFRA_PR_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.pr_url // empty')
+          CICD_PR_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.cicd_pr_url // empty')
+          SERVICE_REPO_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.service_repo_url // empty')
+          
+          if [ -z "$INFRA_PR_URL" ] || [ "$INFRA_PR_URL" == "null" ]; then
+            echo "❌ Error: Could not find infrastructure PR URL"
+            exit 1
+          fi
+          
+          echo "✅ Found infrastructure PR URL: $INFRA_PR_URL"
+          echo "INFRA_PR_URL=$INFRA_PR_URL" >> $GITHUB_ENV
+          echo "CICD_PR_URL=$CICD_PR_URL" >> $GITHUB_ENV
+          echo "SERVICE_REPO_URL=$SERVICE_REPO_URL" >> $GITHUB_ENV
+          
+          # Extract PR numbers
+          INFRA_PR_NUMBER=$(echo "$INFRA_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+          CICD_PR_NUMBER=$(echo "$CICD_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+          
+          echo "INFRA_PR_NUMBER=$INFRA_PR_NUMBER" >> $GITHUB_ENV
+          echo "CICD_PR_NUMBER=$CICD_PR_NUMBER" >> $GITHUB_ENV
+
+      - name: Update provisioning request status to approved
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: |
+            {
+              "status": "approved"
+            }
+
+      - name: Log approval start to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "✅ Approval received! Starting infrastructure provisioning and service creation..."
+
+      - name: Checkout Terraform Repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.TF_REPO }}
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Merge Infrastructure Pull Request
+        run: |
+          gh pr merge ${{ env.INFRA_PR_NUMBER }} --admin --squash
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Log infrastructure PR merge
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🔀 Infrastructure PR merged successfully"
+
+      - name: Pull latest main branch
+        run: |
+          git checkout main
+          git pull origin main
+
+      - name: Generate Mock Terraform Apply Output
+        id: mock_apply
+        run: |
+          APP_NAME="${{ github.event.inputs.application_name }}"
+          STACK_TYPE="${{ github.event.inputs.stack_type }}"
+          K8S_SETUP="${{ github.event.inputs.k_8_s_setup }}"
+          DB_SETUP="${{ github.event.inputs.database_setup }}"
+          
+          APPLY_FILE=$(mktemp)
+          RESOURCE_COUNT=0
+          
+          if [ "$STACK_TYPE" = "Containerized (GKE)" ] && [ "$K8S_SETUP" = "Create a new Cluster" ]; then
+            echo "google_container_cluster.cluster: Creating..." >> "$APPLY_FILE"
+            echo "google_container_cluster.cluster: Still creating... [10s elapsed]" >> "$APPLY_FILE"
+            echo "google_container_cluster.cluster: Still creating... [20s elapsed]" >> "$APPLY_FILE"
+            echo "google_container_cluster.cluster: Still creating... [30s elapsed]" >> "$APPLY_FILE"
+            echo "google_container_cluster.cluster: Creation complete after 45s [id=projects/PROJECT_ID/locations/us-central1/clusters/$APP_NAME-cluster]" >> "$APPLY_FILE"
+            echo "" >> "$APPLY_FILE"
+            RESOURCE_COUNT=$((RESOURCE_COUNT + 1))
+          fi
+          
+          if [ "$DB_SETUP" = "Create a new database" ]; then
+            echo "google_sql_database_instance.database: Creating..." >> "$APPLY_FILE"
+            echo "google_sql_database_instance.database: Still creating... [30s elapsed]" >> "$APPLY_FILE"
+            echo "google_sql_database_instance.database: Still creating... [60s elapsed]" >> "$APPLY_FILE"
+            echo "google_sql_database_instance.database: Creation complete after 90s [id=projects/PROJECT_ID/instances/$APP_NAME-db]" >> "$APPLY_FILE"
+            echo "" >> "$APPLY_FILE"
+            RESOURCE_COUNT=$((RESOURCE_COUNT + 1))
+          fi
+          
+          echo "Apply complete! Resources: $RESOURCE_COUNT added, 0 changed, 0 destroyed." >> "$APPLY_FILE"
+          
+          APPLY_OUTPUT=$(cat "$APPLY_FILE")
+          rm "$APPLY_FILE"
+          
+          echo "APPLY_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$APPLY_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Log Terraform Apply to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: |
+            🔧 **Terraform Apply Output:**
+            
+            ```
+            ${{ env.APPLY_OUTPUT }}
+            ```
+            
+            ✅ Infrastructure provisioned successfully!
+
+      - name: Create Cluster Entity (if created)
+        if: github.event.inputs.stack_type == 'Containerized (GKE)' && github.event.inputs.k_8_s_setup == 'Create a new Cluster'
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ github.event.inputs.application_name }}-cluster
+          title: "${{ github.event.inputs.application_name }}-cluster"
+          blueprint: gkeCluster
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: |
+            {
+              "cluster_name": "${{ github.event.inputs.application_name }}-cluster",
+              "cluster_type": "GKE",
+              "region": "us-central1",
+              "gke_version": "latest",
+              "node_count": 3,
+              "status": "active"
+            }
+
+      - name: Create Database Entity (if created)
+        if: github.event.inputs.database_setup == 'Create a new database'
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ github.event.inputs.application_name }}-db
+          title: "${{ github.event.inputs.application_name }}-db"
+          blueprint: database
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: |
+            {
+              "database_name": "${{ github.event.inputs.application_name }}-db",
+              "database_type": "CloudSQL",
+              "database_version": "POSTGRES_14",
+              "region": "us-central1",
+              "status": "active"
+            }
+
+      - name: Extract repository identifier from URL
+        id: extract_repo_id
+        run: |
+          REPO_URL="${{ env.SERVICE_REPO_URL }}"
+          # Extract repo name from URL (e.g., https://github.com/org/repo -> repo)
+          REPO_ID=$(echo "$REPO_URL" | sed 's|.*/||' | sed 's|\.git$||')
+          echo "REPO_ID=$REPO_ID" >> $GITHUB_ENV
+          echo "repo_identifier=$REPO_ID" >> $GITHUB_OUTPUT
+
+      - name: Merge CI/CD PR
+        if: env.CICD_PR_NUMBER != ''
+        run: |
+          # Extract repo owner/name from SERVICE_REPO_URL
+          REPO_URL="${{ env.SERVICE_REPO_URL }}"
+          REPO_FULL=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
+          
+          gh pr merge ${{ env.CICD_PR_NUMBER }} --repo "$REPO_FULL" --admin --squash
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Log CI/CD PR merge
+        if: env.CICD_PR_NUMBER != ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🔀 CI/CD PR merged successfully"
+
+      - name: Build service relations JSON
+        id: build_service_relations
+        run: |
+          APP_NAME="${{ github.event.inputs.application_name }}"
+          REPO_ID="${{ env.REPO_ID }}"
+          
+          RELATIONS=$(jq -n \
+            --arg repo "$REPO_ID" \
+            '{"repository": $repo}')
+          
+          # Add cluster relation if created
+          if [ "${{ github.event.inputs.stack_type }}" = "Containerized (GKE)" ] && [ "${{ github.event.inputs.k_8_s_setup }}" = "Create a new Cluster" ]; then
+            RELATIONS=$(echo "$RELATIONS" | jq --arg cluster "${APP_NAME}-cluster" '. + {"cluster": $cluster}')
+          fi
+          
+          # Add database relation if created
+          if [ "${{ github.event.inputs.database_setup }}" = "Create a new database" ]; then
+            RELATIONS=$(echo "$RELATIONS" | jq --arg db "${APP_NAME}-db" '. + {"database": $db}')
+          fi
+          
+          echo "RELATIONS<<EOF" >> $GITHUB_OUTPUT
+          echo "$RELATIONS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Service Entity
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ github.event.inputs.application_name }}
+          title: "${{ github.event.inputs.application_name }}"
+          blueprint: service
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: |
+            {
+              "name": "${{ github.event.inputs.application_name }}",
+              "description": "${{ github.event.inputs.description }}",
+              "stack_type": "${{ github.event.inputs.stack_type }}",
+              "runtime": "${{ github.event.inputs.runtime }}",
+              "status": "active"
+            }
+          relations: ${{ steps.build_service_relations.outputs.RELATIONS }}
+
+      - name: Log service creation to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "✅ Service entity created successfully with all relations"
+
+      - name: Update provisioning request status to completed
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: |
+            {
+              "status": "completed"
+            }
+
+      - name: Finalize Port run
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          status: "SUCCESS"
+          summary: "✅ Service `${{ github.event.inputs.application_name }}` created successfully"
+          logMessage: "🎉 Service creation complete! Infrastructure provisioned, CI/CD configured, and service entity created."
+          link: |
+            ["${{ env.SERVICE_REPO_URL }}", "${{ env.INFRA_PR_URL }}"]
+

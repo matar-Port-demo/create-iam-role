@@ -1,0 +1,410 @@
+name: Create Service PR and Plan
+
+on:
+  workflow_dispatch:
+    inputs:
+      application_name:
+        description: 'Application name'
+        required: true
+      stack_type:
+        description: 'Stack type (Containerized/Non-containerized)'
+        required: true
+      description:
+        description: 'Service description'
+        required: false
+      use_existing_repo:
+        description: 'Use existing repository or create new'
+        required: true
+      repository:
+        description: 'Existing repository identifier'
+        required: false
+      repository_name:
+        description: 'New repository name'
+        required: false
+      runtime:
+        description: 'Runtime (Python/Java/Go)'
+        required: false
+      database_setup:
+        description: 'Database setup option'
+        required: false
+      k_8_s_setup:
+        description: 'K8s setup option'
+        required: false
+      port_context:
+        description: 'Port context object (includes runId)'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+env:
+  TF_REPO: db-hackathon/app-deployment-repo
+  BASE_TF_DIR: resources
+  BRANCH_PREFIX: create-service
+  MAIN_BRANCH: main
+
+jobs:
+  create-pr-and-plan:
+    runs-on: ubuntu-latest
+    outputs:
+      service_repo_url: ${{ steps.setup_repo.outputs.repo_url }}
+      cicd_pr_url: ${{ steps.create_cicd_pr.outputs.pull-request-url }}
+      infra_pr_url: ${{ steps.create_infra_pr.outputs.pull-request-url }}
+      port_run_id: ${{ steps.extract_run_id.outputs.PORT_RUN_ID }}
+    steps:
+      - name: Extract Port Run ID and Requestor
+        id: extract_run_id
+        run: |
+          PORT_RUN_ID="${{ fromJson(github.event.inputs.port_context).runId }}"
+          REQUESTOR_EMAIL="${{ fromJson(github.event.inputs.port_context).user.email }}"
+          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
+          echo "REQUESTOR_EMAIL=$REQUESTOR_EMAIL" >> $GITHUB_ENV
+          echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+
+      - name: Log start to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🚀 Starting service creation for `${{ github.event.inputs.application_name }}`"
+
+      - name: Setup Repository
+        id: setup_repo
+        run: |
+          APP_NAME="${{ github.event.inputs.application_name }}"
+          USE_EXISTING="${{ github.event.inputs.use_existing_repo }}"
+          
+          if [ "$USE_EXISTING" = "Create a new Repository" ]; then
+            REPO_NAME="${{ github.event.inputs.repository_name }}"
+            if [ -z "$REPO_NAME" ]; then
+              REPO_NAME="$APP_NAME"
+            fi
+            
+            echo "Creating new repository: $REPO_NAME"
+            
+            # Create repository via GitHub API
+            CREATE_RESPONSE=$(curl -s -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -d "{\"name\":\"$REPO_NAME\",\"private\":true,\"description\":\"${{ github.event.inputs.description }}\"}" \
+              "https://api.github.com/orgs/${{ github.repository_owner }}/repos")
+            
+            REPO_URL=$(echo "$CREATE_RESPONSE" | jq -r '.html_url // empty')
+            
+            if [ -z "$REPO_URL" ] || [ "$REPO_URL" == "null" ]; then
+              echo "❌ Failed to create repository"
+              echo "Response: $CREATE_RESPONSE"
+              exit 1
+            fi
+            
+            echo "✅ Repository created: $REPO_URL"
+            echo "repo_url=$REPO_URL" >> $GITHUB_OUTPUT
+            echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+            echo "REPO_URL=$REPO_URL" >> $GITHUB_ENV
+            echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+          else
+            # Use existing repository - get URL from Port entity
+            REPO_IDENTIFIER="${{ github.event.inputs.repository }}"
+            echo "Using existing repository: $REPO_IDENTIFIER"
+            echo "repo_name=$REPO_IDENTIFIER" >> $GITHUB_OUTPUT
+            echo "REPO_NAME=$REPO_IDENTIFIER" >> $GITHUB_ENV
+            # Note: REPO_URL will be set after fetching from Port
+          fi
+
+      - name: Get existing repository URL from Port
+        if: github.event.inputs.use_existing_repo == 'Use existing repository'
+        id: get_repo_url
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: GET
+          identifier: ${{ github.event.inputs.repository }}
+          blueprint: githubRepository
+        continue-on-error: true
+
+      - name: Extract repository URL
+        if: github.event.inputs.use_existing_repo == 'Use existing repository'
+        run: |
+          REPO_JSON='${{ steps.get_repo_url.outputs.entity }}'
+          REPO_URL=$(echo "$REPO_JSON" | jq -r '.properties.url // empty')
+          if [ -z "$REPO_URL" ] || [ "$REPO_URL" == "null" ]; then
+            # Fallback: construct URL from identifier
+            REPO_URL="https://github.com/${{ github.repository_owner }}/${{ github.event.inputs.repository }}"
+          fi
+          echo "REPO_URL=$REPO_URL" >> $GITHUB_ENV
+          echo "repo_url=$REPO_URL" >> $GITHUB_OUTPUT
+
+      - name: Log repository setup to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "📦 Repository ready: ${{ env.REPO_URL }}"
+          link: "[\"${{ env.REPO_URL }}\"]"
+
+      - name: Checkout Service Repository
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.REPO_NAME }}
+          token: ${{ secrets.GH_PAT }}
+          path: service-repo
+
+      - name: Generate CI/CD Workflow
+        run: |
+          APP_NAME="${{ github.event.inputs.application_name }}"
+          STACK_TYPE="${{ github.event.inputs.stack_type }}"
+          RUNTIME="${{ github.event.inputs.runtime }}"
+          
+          mkdir -p service-repo/.github/workflows
+          
+          # Basic CI/CD workflow template
+          cat > service-repo/.github/workflows/deploy.yml <<'WORKFLOW_EOF'
+          name: Deploy Service
+          
+          on:
+            workflow_dispatch:
+            push:
+              branches:
+                - main
+          
+          jobs:
+            deploy:
+              runs-on: ubuntu-latest
+              steps:
+                - name: Checkout code
+                  uses: actions/checkout@v3
+                
+                - name: Deploy to infrastructure
+                  run: |
+                    echo "🚀 Deploying service..."
+                    # Add deployment steps based on stack type and runtime
+                    echo "Deployment steps will be configured here"
+          WORKFLOW_EOF
+          
+          echo "✅ CI/CD workflow generated"
+
+      - name: Create CI/CD PR in Service Repository
+        id: create_cicd_pr
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GH_PAT }}
+          path: service-repo
+          commit-message: "Add CI/CD workflow for ${{ github.event.inputs.application_name }}"
+          branch: add-cicd-workflow-${{ github.run_id }}
+          base: main
+          title: "Add CI/CD workflow for ${{ github.event.inputs.application_name }}"
+          body: "This PR adds CI/CD workflow configuration. **Waiting for approval in Port.**"
+
+      - name: Log CI/CD PR creation to Port
+        if: steps.create_cicd_pr.outputs.pull-request-url != ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "📋 CI/CD PR created: ${{ steps.create_cicd_pr.outputs.pull-request-url }}"
+          link: "[\"${{ steps.create_cicd_pr.outputs.pull-request-url }}\"]"
+
+      - name: Checkout Terraform Repo
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ env.TF_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: terraform-repo
+
+      - name: Generate Infrastructure Terraform Files
+        run: |
+          APP_NAME="${{ github.event.inputs.application_name }}"
+          STACK_TYPE="${{ github.event.inputs.stack_type }}"
+          K8S_SETUP="${{ github.event.inputs.k_8_s_setup }}"
+          DB_SETUP="${{ github.event.inputs.database_setup }}"
+          TF_DIR="terraform-repo/${{ env.BASE_TF_DIR }}/$APP_NAME"
+          
+          mkdir -p "$TF_DIR"
+          
+          # Generate cluster.tf if needed
+          if [ "$STACK_TYPE" = "Containerized (GKE)" ] && [ "$K8S_SETUP" = "Create a new Cluster" ]; then
+            echo "Generating cluster Terraform config..."
+            # For now, create a placeholder - will be filled with actual template later
+            cat > "$TF_DIR/cluster.tf" <<'TF_EOF'
+          # GKE Cluster configuration for {{ application_name }}
+          # This will be generated from template
+          TF_EOF
+          fi
+          
+          # Generate database.tf if needed
+          if [ "$DB_SETUP" = "Create a new database" ]; then
+            echo "Generating database Terraform config..."
+            # For now, create a placeholder - will be filled with actual template later
+            cat > "$TF_DIR/database.tf" <<'TF_EOF'
+          # CloudSQL Database configuration for {{ application_name }}
+          # This will be generated from template
+          TF_EOF
+          fi
+          
+          echo "✅ Infrastructure Terraform files generated"
+
+      - name: Create Infrastructure PR
+        id: create_infra_pr
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GH_PAT }}
+          path: terraform-repo
+          commit-message: "Add infrastructure for service ${{ github.event.inputs.application_name }}"
+          branch: ${{ env.BRANCH_PREFIX }}-${{ github.run_id }}
+          base: ${{ env.MAIN_BRANCH }}
+          title: "Create infrastructure for service ${{ github.event.inputs.application_name }}"
+          body: "This PR adds infrastructure configuration (cluster and/or database) via Terraform. **Waiting for approval in Port.**"
+
+      - name: Log Infrastructure PR creation to Port
+        if: steps.create_infra_pr.outputs.pull-request-url != ''
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "📋 Infrastructure PR created: ${{ steps.create_infra_pr.outputs.pull-request-url }}"
+          link: "[\"${{ steps.create_infra_pr.outputs.pull-request-url }}\"]"
+
+      - name: Generate Mock Terraform Plan Output
+        id: mock_plan
+        run: |
+          APP_NAME="${{ github.event.inputs.application_name }}"
+          STACK_TYPE="${{ github.event.inputs.stack_type }}"
+          K8S_SETUP="${{ github.event.inputs.k_8_s_setup }}"
+          DB_SETUP="${{ github.event.inputs.database_setup }}"
+          
+          PLAN_FILE=$(mktemp)
+          echo "Terraform will perform the following actions:" > "$PLAN_FILE"
+          echo "" >> "$PLAN_FILE"
+          
+          RESOURCE_COUNT=0
+          
+          if [ "$STACK_TYPE" = "Containerized (GKE)" ] && [ "$K8S_SETUP" = "Create a new Cluster" ]; then
+            echo "  # google_container_cluster.cluster will be created" >> "$PLAN_FILE"
+            echo "  + resource \"google_container_cluster\" \"cluster\" {" >> "$PLAN_FILE"
+            echo "      + name     = \"$APP_NAME-cluster\"" >> "$PLAN_FILE"
+            echo "      + location = \"us-central1\"" >> "$PLAN_FILE"
+            echo "      + initial_node_count = 3" >> "$PLAN_FILE"
+            echo "      ..." >> "$PLAN_FILE"
+            echo "    }" >> "$PLAN_FILE"
+            echo "" >> "$PLAN_FILE"
+            RESOURCE_COUNT=$((RESOURCE_COUNT + 1))
+          fi
+          
+          if [ "$DB_SETUP" = "Create a new database" ]; then
+            echo "  # google_sql_database_instance.database will be created" >> "$PLAN_FILE"
+            echo "  + resource \"google_sql_database_instance\" \"database\" {" >> "$PLAN_FILE"
+            echo "      + name             = \"$APP_NAME-db\"" >> "$PLAN_FILE"
+            echo "      + database_version = \"POSTGRES_14\"" >> "$PLAN_FILE"
+            echo "      + region           = \"us-central1\"" >> "$PLAN_FILE"
+            echo "      ..." >> "$PLAN_FILE"
+            echo "    }" >> "$PLAN_FILE"
+            echo "" >> "$PLAN_FILE"
+            RESOURCE_COUNT=$((RESOURCE_COUNT + 1))
+          fi
+          
+          echo "Plan: $RESOURCE_COUNT to add, 0 to change, 0 to destroy." >> "$PLAN_FILE"
+          
+          PLAN_OUTPUT=$(cat "$PLAN_FILE")
+          rm "$PLAN_FILE"
+          
+          echo "PLAN_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$PLAN_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Log Terraform Plan to Port
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: |
+            📋 **Terraform Plan Output:**
+            
+            ```
+            ${{ env.PLAN_OUTPUT }}
+            ```
+            
+            ⏸️  **Waiting for approval in Port...**
+            
+            Please review the plan above and approve this action to proceed with service creation.
+
+      - name: Build Terraform plan properties
+        id: build_plan_properties
+        run: |
+          CODE_FENCE='```'
+          PLAN_MARKDOWN="${CODE_FENCE}"$'\n'"${PLAN_OUTPUT}"$'\n'"${CODE_FENCE}"
+          PROPERTIES_JSON=$(jq -n --arg markdown "$PLAN_MARKDOWN" '{"terraform_plan": $markdown}')
+          echo "PROPERTIES_JSON<<EOF" >> $GITHUB_OUTPUT
+          echo "$PROPERTIES_JSON" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          PLAN_OUTPUT: ${{ env.PLAN_OUTPUT }}
+
+      - name: Create provisioning request entity
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ env.PORT_RUN_ID }}
+          title: "Service Provisioning: ${{ github.event.inputs.application_name }}"
+          blueprint: provisioningRequest
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: |
+            {
+              "resource_name": "${{ github.event.inputs.application_name }}",
+              "resource_type": "Service",
+              "status": "waiting_approval",
+              "pr_url": "${{ steps.create_infra_pr.outputs.pull-request-url }}",
+              "cicd_pr_url": "${{ steps.create_cicd_pr.outputs.pull-request-url }}",
+              "service_repo_url": "${{ steps.setup_repo.outputs.repo_url }}",
+              "port_run_link": "https://app.getport.io/organization/run?runId=${{ env.PORT_RUN_ID }}"
+            }
+          relations: |
+            {
+              "requestor": "${{ env.REQUESTOR_EMAIL }}"
+            }
+
+      - name: Save Terraform plan to provisioning request entity
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+          runId: ${{ env.PORT_RUN_ID }}
+          properties: ${{ steps.build_plan_properties.outputs.PROPERTIES_JSON }}
+
+      - name: Log PR URLs to Port run
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          link: |
+            ["${{ steps.create_infra_pr.outputs.pull-request-url }}", "${{ steps.create_cicd_pr.outputs.pull-request-url }}"]
+
