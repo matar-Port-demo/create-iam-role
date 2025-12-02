@@ -1,0 +1,56 @@
+name: Deploy Service
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+env:
+  SERVICE_NAME: "{{ application_name }}"
+  CLUSTER_NAME: "{{ cluster_name }}"
+  REGION: "{{ region }}"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      
+      - name: Build with Maven
+        run: |
+          if [ -f pom.xml ]; then
+            mvn clean package -DskipTests
+          elif [ -f build.gradle ]; then
+            ./gradlew build -x test
+          fi
+      
+      - name: Build Docker image
+        run: |
+          docker build -t gcr.io/{{ project_id }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
+      
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+      
+      - name: Push Docker image
+        run: |
+          docker push gcr.io/{{ project_id }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+      
+      - name: Deploy to GKE
+        run: |
+          gcloud container clusters get-credentials ${{ env.CLUSTER_NAME }} --region ${{ env.REGION }}
+          kubectl set image deployment/${{ env.SERVICE_NAME }} ${{ env.SERVICE_NAME }}=gcr.io/{{ project_id }}/${{ env.SERVICE_NAME }}:${{ github.sha }} || \
+          kubectl create deployment ${{ env.SERVICE_NAME }} --image=gcr.io/{{ project_id }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+

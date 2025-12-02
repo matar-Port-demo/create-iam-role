@@ -1,0 +1,34 @@
+name: Deploy Service
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+env:
+  SERVICE_NAME: "{{ application_name }}"
+  REGION: "{{ region }}"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+      
+      - name: Deploy to Compute Engine
+        run: |
+          echo "🚀 Deploying service ${{ env.SERVICE_NAME }} to VM instance"
+          # Add your VM deployment steps here
+          # Example: gcloud compute instances create ...
+          # Or use startup scripts, etc.
+

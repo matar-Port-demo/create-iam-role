@@ -116,6 +116,78 @@ jobs:
             echo "REPO_NAME=$REPO_IDENTIFIER" >> $GITHUB_ENV
             # Note: REPO_URL will be set after fetching from Port
           fi
+      
+      - name: Install Cookiecutter
+        if: github.event.inputs.use_existing_repo == 'Create a new Repository'
+        run: |
+          pip3 install cookiecutter==2.3.0 -q
+          echo "✅ Cookiecutter installed"
+      
+      - name: Scaffold Repository from Cookiecutter Template
+        if: github.event.inputs.use_existing_repo == 'Create a new Repository'
+        run: |
+          APP_NAME="${{ github.event.inputs.application_name }}"
+          REPO_NAME="${{ env.REPO_NAME }}"
+          DESCRIPTION="${{ github.event.inputs.description }}"
+          COOKIECUTTER_TEMPLATE_URL="https://github.com/cookiecutter/cookiecutter-pypackage"
+          
+          # Get user email from Port context
+          USER_EMAIL=$(echo '${{ github.event.inputs.port_context }}' | jq -r '.user.email // "developer@example.com"')
+          
+          echo "🏗️ Scaffolding repository from Cookiecutter template..."
+          echo "Template: $COOKIECUTTER_TEMPLATE_URL"
+          echo "Repository: $REPO_NAME"
+          
+          # Create cookiecutter config file
+          cat > cookiecutter.yaml <<EOF
+          default_context:
+            full_name: "$USER_EMAIL"
+            email: "$USER_EMAIL"
+            github_username: "${{ github.repository_owner }}"
+            project_name: "$REPO_NAME"
+            repo_name: "$REPO_NAME"
+            project_short_description: "${DESCRIPTION:-A new Python package}"
+            release_date: "$(date +%Y-%m-%d)"
+            version: "0.1.0"
+            use_pytest: "y"
+            use_pypi_deployment_with_travis: "n"
+            add_pyup_badge: "n"
+            command_line_interface: "Click"
+            create_author_file: "y"
+            open_source_license: "MIT license"
+          EOF
+          
+          # Run cookiecutter
+          cookiecutter $COOKIECUTTER_TEMPLATE_URL --no-input --config-file cookiecutter.yaml --output-dir scaffold_out
+          
+          # Move scaffolded content to service-repo directory
+          mkdir -p service-repo
+          SCAFFOLD_DIR="scaffold_out/$REPO_NAME"
+          
+          if [ -d "$SCAFFOLD_DIR" ]; then
+            cp -r "$SCAFFOLD_DIR"/* service-repo/
+            echo "✅ Repository scaffolded successfully"
+          else
+            echo "⚠️ Cookiecutter output directory not found, creating empty repo structure"
+            mkdir -p service-repo
+            echo "# $REPO_NAME" > service-repo/README.md
+            echo "${DESCRIPTION:-A new service}" >> service-repo/README.md
+          fi
+          
+          # Initialize git in scaffolded directory
+          cd service-repo
+          git init
+          git config user.name "GitHub Actions"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Initial commit: Scaffolded from cookiecutter template"
+          
+          # Add remote and push initial commit
+          git remote add origin "https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository_owner }}/$REPO_NAME.git"
+          git branch -M main
+          git push -u origin main
+          
+          echo "✅ Scaffolded code pushed to repository"
 
       - name: Get existing repository URL from Port
         if: github.event.inputs.use_existing_repo == 'Use existing repository'
@@ -153,7 +225,15 @@ jobs:
           logMessage: "📦 Repository ready: ${{ env.REPO_URL }}"
           link: "[\"${{ env.REPO_URL }}\"]"
 
-      - name: Checkout Service Repository
+      - name: Checkout templates repo (for CI/CD templates)
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ secrets.GH_PAT }}
+          path: templates-repo
+
+      - name: Checkout Service Repository (if using existing)
+        if: github.event.inputs.use_existing_repo == 'Use existing repository'
         uses: actions/checkout@v3
         with:
           repository: ${{ env.REPO_NAME }}
@@ -168,31 +248,34 @@ jobs:
           
           mkdir -p service-repo/.github/workflows
           
-          # Basic CI/CD workflow template
-          cat > service-repo/.github/workflows/deploy.yml <<'WORKFLOW_EOF'
-          name: Deploy Service
+          # Select appropriate CI/CD template based on stack type and runtime
+          if [ "$STACK_TYPE" = "Containerized (GKE)" ]; then
+            case "$RUNTIME" in
+              "Python")
+                TEMPLATE_PATH="templates-repo/templates/cicd/deploy-containerized-python.yml"
+                ;;
+              "Java")
+                TEMPLATE_PATH="templates-repo/templates/cicd/deploy-containerized-java.yml"
+                ;;
+              "Go")
+                TEMPLATE_PATH="templates-repo/templates/cicd/deploy-containerized-go.yml"
+                ;;
+              *)
+                TEMPLATE_PATH="templates-repo/templates/cicd/deploy-containerized-python.yml"
+                ;;
+            esac
+          else
+            TEMPLATE_PATH="templates-repo/templates/cicd/deploy-non-containerized.yml"
+          fi
           
-          on:
-            workflow_dispatch:
-            push:
-              branches:
-                - main
+          # Replace template variables
+          sed -e "s/{{ application_name }}/$APP_NAME/g" \
+              -e "s/{{ cluster_name }}/$APP_NAME-cluster/g" \
+              -e "s/{{ region }}/us-central1/g" \
+              -e "s/{{ project_id }}/PROJECT_ID/g" \
+              "$TEMPLATE_PATH" > service-repo/.github/workflows/deploy.yml
           
-          jobs:
-            deploy:
-              runs-on: ubuntu-latest
-              steps:
-                - name: Checkout code
-                  uses: actions/checkout@v3
-                
-                - name: Deploy to infrastructure
-                  run: |
-                    echo "🚀 Deploying service..."
-                    # Add deployment steps based on stack type and runtime
-                    echo "Deployment steps will be configured here"
-          WORKFLOW_EOF
-          
-          echo "✅ CI/CD workflow generated"
+          echo "✅ CI/CD workflow generated from template: $TEMPLATE_PATH"
 
       - name: Create CI/CD PR in Service Repository
         id: create_cicd_pr
@@ -204,7 +287,15 @@ jobs:
           branch: add-cicd-workflow-${{ github.run_id }}
           base: main
           title: "Add CI/CD workflow for ${{ github.event.inputs.application_name }}"
-          body: "This PR adds CI/CD workflow configuration. **Waiting for approval in Port.**"
+          body: |
+            This PR adds CI/CD workflow configuration.
+            
+            **Changes:**
+            - Added `.github/workflows/deploy.yml` workflow file
+            - Configured for ${{ github.event.inputs.stack_type }}
+            - Runtime: ${{ github.event.inputs.runtime }}
+            
+            **Waiting for approval in Port.**
 
       - name: Log CI/CD PR creation to Port
         if: steps.create_cicd_pr.outputs.pull-request-url != ''
@@ -225,6 +316,13 @@ jobs:
           token: ${{ secrets.GH_PAT }}
           path: terraform-repo
 
+      - name: Checkout templates repo (for Terraform templates)
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ secrets.GH_PAT }}
+          path: terraform-templates-repo
+
       - name: Generate Infrastructure Terraform Files
         run: |
           APP_NAME="${{ github.event.inputs.application_name }}"
@@ -237,22 +335,42 @@ jobs:
           
           # Generate cluster.tf if needed
           if [ "$STACK_TYPE" = "Containerized (GKE)" ] && [ "$K8S_SETUP" = "Create a new Cluster" ]; then
-            echo "Generating cluster Terraform config..."
-            # For now, create a placeholder - will be filled with actual template later
-            cat > "$TF_DIR/cluster.tf" <<'TF_EOF'
-          # GKE Cluster configuration for {{ application_name }}
-          # This will be generated from template
-          TF_EOF
+            echo "Generating cluster Terraform config from template..."
+            CLUSTER_NAME="$APP_NAME-cluster"
+            PROJECT_ID="PROJECT_ID"
+            REGION="us-central1"
+            NODE_COUNT="3"
+            MACHINE_TYPE="e2-medium"
+            
+            sed -e "s/{{ cluster_name }}/$CLUSTER_NAME/g" \
+                -e "s/{{ project_id }}/$PROJECT_ID/g" \
+                -e "s/{{ region }}/$REGION/g" \
+                -e "s/{{ node_count }}/$NODE_COUNT/g" \
+                -e "s/{{ machine_type }}/$MACHINE_TYPE/g" \
+                "terraform-templates-repo/templates/gke-cluster.tf" > "$TF_DIR/cluster.tf"
           fi
           
           # Generate database.tf if needed
           if [ "$DB_SETUP" = "Create a new database" ]; then
-            echo "Generating database Terraform config..."
-            # For now, create a placeholder - will be filled with actual template later
-            cat > "$TF_DIR/database.tf" <<'TF_EOF'
-          # CloudSQL Database configuration for {{ application_name }}
-          # This will be generated from template
-          TF_EOF
+            echo "Generating database Terraform config from template..."
+            DB_NAME="$APP_NAME-db"
+            PROJECT_ID="PROJECT_ID"
+            REGION="us-central1"
+            DB_VERSION="POSTGRES_14"
+            DB_TIER="db-f1-micro"
+            BACKUP_SCHEDULE="03:00"
+            DB_USER="$APP_NAME-user"
+            DB_PASSWORD="$(openssl rand -base64 32)"
+            
+            sed -e "s/{{ database_name }}/$DB_NAME/g" \
+                -e "s/{{ project_id }}/$PROJECT_ID/g" \
+                -e "s/{{ region }}/$REGION/g" \
+                -e "s/{{ database_version }}/$DB_VERSION/g" \
+                -e "s/{{ database_tier }}/$DB_TIER/g" \
+                -e "s/{{ backup_schedule }}/$BACKUP_SCHEDULE/g" \
+                -e "s/{{ database_user }}/$DB_USER/g" \
+                -e "s/{{ database_password }}/$DB_PASSWORD/g" \
+                "terraform-templates-repo/templates/database.tf" > "$TF_DIR/database.tf"
           fi
           
           echo "✅ Infrastructure Terraform files generated"
