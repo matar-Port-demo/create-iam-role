@@ -123,6 +123,15 @@ jobs:
           pip3 install cookiecutter==2.3.0 -q
           echo "✅ Cookiecutter installed"
       
+      - name: Configure Git for Cookiecutter
+        if: github.event.inputs.use_existing_repo == 'Create a new Repository'
+        run: |
+          # Configure git to use token for cloning public repos
+          git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          echo "✅ Git configured for authenticated cloning"
+      
       - name: Scaffold Repository from Cookiecutter Template
         if: github.event.inputs.use_existing_repo == 'Create a new Repository'
         run: |
@@ -157,7 +166,7 @@ jobs:
             open_source_license: "MIT license"
           EOF
           
-          # Run cookiecutter
+          # Run cookiecutter (will use configured git credentials)
           cookiecutter $COOKIECUTTER_TEMPLATE_URL --no-input --config-file cookiecutter.yaml --output-dir scaffold_out
           
           # Move scaffolded content to service-repo directory
