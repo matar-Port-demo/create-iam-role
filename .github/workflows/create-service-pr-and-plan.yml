@@ -62,6 +62,7 @@ jobs:
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
           echo "REQUESTOR_EMAIL=$REQUESTOR_EMAIL" >> $GITHUB_ENV
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+          echo "::set-output name=REQUESTOR_EMAIL::$REQUESTOR_EMAIL"
 
       - name: Log start to Port
         uses: port-labs/port-github-action@v1
@@ -72,6 +73,16 @@ jobs:
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "🚀 Starting service creation for `${{ github.event.inputs.application_name }}`"
+          
+      - name: Log repository setup start
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "📦 Setting up repository for service `${{ github.event.inputs.application_name }}`..."
 
       - name: Setup Repository
         id: setup_repo
@@ -107,8 +118,10 @@ jobs:
             echo "✅ Repository created: $REPO_URL"
             echo "repo_url=$REPO_URL" >> $GITHUB_OUTPUT
             echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+            echo "repo_full_name=${{ github.repository_owner }}/$REPO_NAME" >> $GITHUB_OUTPUT
             echo "REPO_URL=$REPO_URL" >> $GITHUB_ENV
             echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+            echo "REPO_FULL_NAME=${{ github.repository_owner }}/$REPO_NAME" >> $GITHUB_ENV
           else
             # Use existing repository - get URL from Port entity
             REPO_IDENTIFIER="${{ github.event.inputs.repository }}"
@@ -135,6 +148,7 @@ jobs:
           
           echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "repo_full_name=${{ github.repository_owner }}/$REPO_NAME" >> $GITHUB_OUTPUT
           echo "Using repository name: $REPO_NAME"
       
       - name: Create GitHub Repository with Cookiecutter
@@ -193,6 +207,16 @@ jobs:
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "📦 Repository ready: ${{ env.REPO_URL }}"
           link: "[\"${{ env.REPO_URL }}\"]"
+          
+      - name: Log CI/CD workflow generation start
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🔧 Generating CI/CD workflow configuration..."
 
       - name: Checkout templates repo (for CI/CD templates)
         uses: actions/checkout@v3
@@ -205,7 +229,7 @@ jobs:
         if: github.event.inputs.use_existing_repo == 'Use existing repository'
         uses: actions/checkout@v3
         with:
-          repository: ${{ steps.setup_repo.outputs.repo_name }}
+          repository: ${{ github.repository_owner }}/${{ steps.setup_repo.outputs.repo_name }}
           token: ${{ secrets.GH_PAT }}
           path: service-repo
       
@@ -213,7 +237,7 @@ jobs:
         if: github.event.inputs.use_existing_repo == 'Create a new Repository'
         uses: actions/checkout@v3
         with:
-          repository: ${{ steps.scaffold_repo.outputs.repo_name }}
+          repository: ${{ github.repository_owner }}/${{ steps.scaffold_repo.outputs.repo_name }}
           token: ${{ secrets.GH_PAT }}
           path: service-repo
 
@@ -285,6 +309,16 @@ jobs:
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "📋 CI/CD PR created: ${{ steps.create_cicd_pr.outputs.pull-request-url }}"
           link: "[\"${{ steps.create_cicd_pr.outputs.pull-request-url }}\"]"
+          
+      - name: Log infrastructure Terraform generation start
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🏗️ Generating infrastructure Terraform configurations..."
 
       - name: Checkout Terraform Repo
         uses: actions/checkout@v3
