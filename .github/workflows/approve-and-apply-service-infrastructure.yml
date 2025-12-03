@@ -388,6 +388,33 @@ jobs:
               "status": "completed"
             }
 
+      - name: Build final run links
+        id: build_final_links
+        run: |
+          LINKS=()
+          
+          # Add service repo URL if available
+          if [ -n "${{ env.SERVICE_REPO_URL }}" ] && [ "${{ env.SERVICE_REPO_URL }}" != "null" ] && [ "${{ env.SERVICE_REPO_URL }}" != "" ]; then
+            LINKS+=("${{ env.SERVICE_REPO_URL }}")
+          fi
+          
+          # Add infrastructure PR URL if available
+          if [ -n "${{ env.INFRA_PR_URL }}" ] && [ "${{ env.INFRA_PR_URL }}" != "null" ] && [ "${{ env.INFRA_PR_URL }}" != "" ]; then
+            LINKS+=("${{ env.INFRA_PR_URL }}")
+          fi
+          
+          # Build JSON array
+          if [ ${#LINKS[@]} -eq 0 ]; then
+            LINKS_JSON="[]"
+          else
+            LINKS_JSON=$(printf '%s\n' "${LINKS[@]}" | jq -R . | jq -s .)
+          fi
+          
+          echo "LINKS_JSON<<EOF" >> $GITHUB_OUTPUT
+          echo "$LINKS_JSON" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "✅ Built links: $LINKS_JSON"
+
       - name: Finalize Port run
         uses: port-labs/port-github-action@v1
         with:
@@ -399,6 +426,5 @@ jobs:
           status: "SUCCESS"
           summary: "✅ Service `${{ github.event.inputs.application_name }}` created successfully"
           logMessage: "🎉 Service creation complete! Infrastructure provisioned, CI/CD configured, and service entity created."
-          link: |
-            ["${{ env.SERVICE_REPO_URL }}", "${{ env.INFRA_PR_URL }}"]
+          link: ${{ steps.build_final_links.outputs.LINKS_JSON }}
 
