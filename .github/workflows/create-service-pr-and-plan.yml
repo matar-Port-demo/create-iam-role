@@ -276,6 +276,14 @@ jobs:
             - Runtime: ${{ github.event.inputs.runtime }}
             
             **Waiting for approval in Port.**
+          create-empty-commit: false
+          
+      - name: Debug CI/CD PR output
+        run: |
+          echo "CI/CD PR URL output: ${{ steps.create_cicd_pr.outputs.pull-request-url }}"
+          echo "CI/CD PR number output: ${{ steps.create_cicd_pr.outputs.pull-request-number }}"
+          echo "All CI/CD PR outputs:"
+          echo "${{ toJSON(steps.create_cicd_pr.outputs) }}"
 
       - name: Log CI/CD PR creation to Port
         if: steps.create_cicd_pr.outputs.pull-request-url != ''
@@ -470,6 +478,25 @@ jobs:
         env:
           PLAN_OUTPUT: ${{ env.PLAN_OUTPUT }}
 
+      - name: Build PR URLs array
+        id: build_pr_urls
+        run: |
+          INFRA_PR_URL="${{ steps.create_infra_pr.outputs.pull-request-url }}"
+          CICD_PR_URL="${{ steps.create_cicd_pr.outputs.pull-request-url }}"
+          
+          # Build array of PR URLs (filter out empty values)
+          PR_URLS_ARRAY="[]"
+          if [ -n "$INFRA_PR_URL" ] && [ "$INFRA_PR_URL" != "null" ] && [ "$INFRA_PR_URL" != "" ]; then
+            PR_URLS_ARRAY=$(echo "$PR_URLS_ARRAY" | jq --arg url "$INFRA_PR_URL" '. + [$url]')
+          fi
+          if [ -n "$CICD_PR_URL" ] && [ "$CICD_PR_URL" != "null" ] && [ "$CICD_PR_URL" != "" ]; then
+            PR_URLS_ARRAY=$(echo "$PR_URLS_ARRAY" | jq --arg url "$CICD_PR_URL" '. + [$url]')
+          fi
+          
+          echo "PR_URLS_ARRAY=$PR_URLS_ARRAY" >> $GITHUB_ENV
+          echo "pr_urls_array=$PR_URLS_ARRAY" >> $GITHUB_OUTPUT
+          echo "PR URLs to save: $PR_URLS_ARRAY"
+          
       - name: Create provisioning request entity
         uses: port-labs/port-github-action@v1
         with:
@@ -486,8 +513,7 @@ jobs:
               "resource_name": "${{ github.event.inputs.application_name }}",
               "resource_type": "Service",
               "status": "waiting_approval",
-              "pr_url": "${{ steps.create_infra_pr.outputs.pull-request-url }}",
-              "cicd_pr_url": "${{ steps.create_cicd_pr.outputs.pull-request-url }}",
+              "pr_urls": ${{ steps.build_pr_urls.outputs.pr_urls_array }},
               "service_repo_url": "${{ steps.setup_repo.outputs.repo_url }}",
               "port_run_link": "https://app.getport.io/organization/run?runId=${{ env.PORT_RUN_ID }}"
             }

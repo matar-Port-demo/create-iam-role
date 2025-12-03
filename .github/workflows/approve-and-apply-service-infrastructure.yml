@@ -48,76 +48,35 @@ jobs:
           echo "APPROVER_EMAIL=$APPROVER_EMAIL" >> $GITHUB_ENV
           echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
 
-      - name: Get PR URLs from Port run links
-        id: get_pr_urls
+      - name: Get provisioning request entity
+        id: get_provisioning_request
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: GET
+          identifier: ${{ env.PORT_RUN_ID }}
+          blueprint: provisioningRequest
+
+      - name: Extract PR URLs from entity
+        id: extract_pr_urls
         run: |
-          PORT_ACCESS_TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
-            -H "Content-Type: application/json" \
-            -d "{\"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\", \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"}" | jq -r '.accessToken')
+          # Extract PR URLs array from entity
+          PR_URLS=$(echo "$ENTITY_JSON" | jq -r '.properties.pr_urls // []')
+          SERVICE_REPO_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.service_repo_url // empty')
           
-          MAX_RETRIES=5
-          RETRY_DELAY=3
-          INFRA_PR_URL=""
-          CICD_PR_URL=""
+          if [ "$PR_URLS" = "[]" ] || [ -z "$PR_URLS" ] || [ "$PR_URLS" = "null" ]; then
+            echo "❌ Error: No PR URLs found in provisioning request entity"
+            echo "Entity properties: $(echo "$ENTITY_JSON" | jq '.properties')"
+            exit 1
+          fi
           
-          for i in $(seq 1 $MAX_RETRIES); do
-            echo "Attempt $i/$MAX_RETRIES: Fetching PR URLs from Port run ${{ env.PORT_RUN_ID }}..."
-            
-            RUN_DATA=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/${{ env.PORT_RUN_ID }}" \
-              -H "Authorization: Bearer $PORT_ACCESS_TOKEN")
-            
-            # Check if run exists
-            if echo "$RUN_DATA" | jq -e '.ok == false' > /dev/null; then
-              echo "❌ Error: Run not found"
-              echo "Error message: $(echo "$RUN_DATA" | jq -r '.message')"
-              if [ $i -eq $MAX_RETRIES ]; then
-                exit 1
-              fi
-              echo "Retrying in $RETRY_DELAY seconds..."
-              sleep $RETRY_DELAY
-              continue
-            fi
-            
-            # Get all links from the run
-            LINKS=$(echo "$RUN_DATA" | jq -r '.run.link[]? // empty' | tr '\n' ' ')
-            
-            # Find infrastructure PR (usually contains "pull" and "infrastructure" or is the last PR link)
-            # Find CI/CD PR (usually contains "pull" and "cicd" or "workflow")
-            for LINK in $LINKS; do
-              if echo "$LINK" | grep -qE '/pull/[0-9]+'; then
-                if echo "$LINK" | grep -qiE '(infra|terraform|infrastructure)'; then
-                  INFRA_PR_URL="$LINK"
-                elif echo "$LINK" | grep -qiE '(cicd|workflow|deploy)'; then
-                  CICD_PR_URL="$LINK"
-                elif [ -z "$INFRA_PR_URL" ]; then
-                  # If no specific match, assume first PR is infra, second is CI/CD
-                  INFRA_PR_URL="$LINK"
-                else
-                  CICD_PR_URL="$LINK"
-                fi
-              fi
-            done
-            
-            # Also check for service repo URL (non-PR link)
-            SERVICE_REPO_URL=$(echo "$RUN_DATA" | jq -r '.run.link[]? | select(test("^https://github.com/[^/]+/[^/]+$")) | select(test("/pull/") | not)' | head -1)
-            
-            if [ -n "$INFRA_PR_URL" ] && [ "$INFRA_PR_URL" != "null" ]; then
-              echo "✅ Found infrastructure PR URL: $INFRA_PR_URL"
-              if [ -n "$CICD_PR_URL" ] && [ "$CICD_PR_URL" != "null" ]; then
-                echo "✅ Found CI/CD PR URL: $CICD_PR_URL"
-              fi
-              break
-            fi
-            
-            if [ $i -lt $MAX_RETRIES ]; then
-              echo "PR URLs not found yet. Retrying in $RETRY_DELAY seconds..."
-              sleep $RETRY_DELAY
-            else
-              echo "❌ Error: Could not find PR URLs in run links after $MAX_RETRIES attempts"
-              echo "Run links: $(echo "$RUN_DATA" | jq -r '.run.link')"
-              exit 1
-            fi
-          done
+          echo "✅ Found PR URLs: $PR_URLS"
+          
+          # Extract individual PR URLs (first is infrastructure, second is CI/CD)
+          INFRA_PR_URL=$(echo "$PR_URLS" | jq -r '.[0] // empty')
+          CICD_PR_URL=$(echo "$PR_URLS" | jq -r '.[1] // empty')
           
           echo "INFRA_PR_URL=$INFRA_PR_URL" >> $GITHUB_ENV
           echo "CICD_PR_URL=$CICD_PR_URL" >> $GITHUB_ENV
@@ -125,7 +84,7 @@ jobs:
           
           # Extract PR numbers
           INFRA_PR_NUMBER=$(echo "$INFRA_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' || echo "")
-          if [ -n "$CICD_PR_URL" ] && [ "$CICD_PR_URL" != "null" ]; then
+          if [ -n "$CICD_PR_URL" ] && [ "$CICD_PR_URL" != "null" ] && [ "$CICD_PR_URL" != "" ]; then
             CICD_PR_NUMBER=$(echo "$CICD_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' || echo "")
           else
             CICD_PR_NUMBER=""
@@ -144,6 +103,10 @@ jobs:
             echo "❌ Error: Could not extract infrastructure PR number"
             exit 1
           fi
+          
+          echo "✅ Extracted PR numbers - Infrastructure: $INFRA_PR_NUMBER, CI/CD: $CICD_PR_NUMBER"
+        env:
+          ENTITY_JSON: ${{ steps.get_provisioning_request.outputs.entity }}
 
       - name: Update provisioning request status to approved
         uses: port-labs/port-github-action@v1
@@ -170,10 +133,10 @@ jobs:
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "✅ Approval received! Starting infrastructure provisioning and service creation..."
 
-      - name: Checkout Terraform Repo
+      - name: Checkout Service Repository
         uses: actions/checkout@v3
         with:
-          repository: ${{ env.TF_REPO }}
+          repository: ${{ env.SERVICE_REPO }}
           token: ${{ secrets.GH_PAT }}
 
       - name: Merge Infrastructure Pull Request
@@ -308,11 +271,7 @@ jobs:
       - name: Merge CI/CD PR
         if: env.CICD_PR_NUMBER != ''
         run: |
-          # Extract repo owner/name from SERVICE_REPO_URL
-          REPO_URL="${{ env.SERVICE_REPO_URL }}"
-          REPO_FULL=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
-          
-          gh pr merge ${{ env.CICD_PR_NUMBER }} --repo "$REPO_FULL" --admin --squash
+          gh pr merge ${{ env.CICD_PR_NUMBER }} --admin --squash
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
