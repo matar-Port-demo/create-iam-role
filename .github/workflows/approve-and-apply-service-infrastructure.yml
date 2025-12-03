@@ -105,12 +105,19 @@ jobs:
           INFRA_PR_NUMBER=$(echo "$INFRA_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' || echo "")
           if [ -n "$CICD_PR_URL" ] && [ "$CICD_PR_URL" != "null" ] && [ "$CICD_PR_URL" != "" ]; then
             CICD_PR_NUMBER=$(echo "$CICD_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' || echo "")
+            echo "✅ Found CI/CD PR URL: $CICD_PR_URL"
+            echo "✅ Extracted CI/CD PR number: $CICD_PR_NUMBER"
           else
             CICD_PR_NUMBER=""
+            echo "⚠️  Warning: CI/CD PR URL is empty or null"
           fi
           
           echo "INFRA_PR_NUMBER=$INFRA_PR_NUMBER" >> $GITHUB_ENV
           echo "CICD_PR_NUMBER=$CICD_PR_NUMBER" >> $GITHUB_ENV
+          
+          if [ -z "$CICD_PR_NUMBER" ] || [ "$CICD_PR_NUMBER" == "" ]; then
+            echo "⚠️  Warning: CI/CD PR number is empty - CI/CD PR merge will be skipped"
+          fi
           
           # Extract repository from PR URL (format: https://github.com/owner/repo/pull/123)
           if [ -n "$INFRA_PR_URL" ]; then
