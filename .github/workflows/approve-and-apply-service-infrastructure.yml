@@ -291,20 +291,35 @@ jobs:
               "status": "active"
             }
 
-      - name: Extract repository identifier from URL
-        id: extract_repo_id
+      - name: Set repository identifier
+        id: set_repo_id
         run: |
-          REPO_URL="${{ env.SERVICE_REPO_URL }}"
-          # Extract repo name from URL (e.g., https://github.com/org/repo -> repo)
-          REPO_ID=$(echo "$REPO_URL" | sed 's|.*/||' | sed 's|\.git$||')
+          # Use SERVICE_REPO which is already in owner/repo format (extracted from PR URL)
+          # If SERVICE_REPO is not available, construct from known values
+          if [ -n "${{ env.SERVICE_REPO }}" ] && [ "${{ env.SERVICE_REPO }}" != "null" ] && [ "${{ env.SERVICE_REPO }}" != "" ]; then
+            REPO_ID="${{ env.SERVICE_REPO }}"
+          else
+            # Fallback: construct from application name and repository owner
+            APP_NAME="${{ github.event.inputs.application_name }}"
+            REPO_OWNER="${{ github.repository_owner }}"
+            REPO_ID="$REPO_OWNER/$APP_NAME"
+          fi
           echo "REPO_ID=$REPO_ID" >> $GITHUB_ENV
           echo "repo_identifier=$REPO_ID" >> $GITHUB_OUTPUT
+          echo "✅ Repository identifier: $REPO_ID"
 
       - name: Build service relations JSON
         id: build_service_relations
         run: |
           APP_NAME="${{ github.event.inputs.application_name }}"
           REPO_ID="${{ env.REPO_ID }}"
+          
+          # Start with repository relation (required)
+          if [ -z "$REPO_ID" ] || [ "$REPO_ID" == "null" ] || [ "$REPO_ID" == "" ]; then
+            echo "❌ Error: Repository identifier is empty"
+            echo "SERVICE_REPO_URL: ${{ env.SERVICE_REPO_URL }}"
+            exit 1
+          fi
           
           RELATIONS=$(jq -n \
             --arg repo "$REPO_ID" \
@@ -320,9 +335,12 @@ jobs:
             RELATIONS=$(echo "$RELATIONS" | jq --arg db "${APP_NAME}-db" '. + {"database": $db}')
           fi
           
+          echo "✅ Built relations: $RELATIONS"
           echo "RELATIONS<<EOF" >> $GITHUB_OUTPUT
           echo "$RELATIONS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          REPO_ID: ${{ env.REPO_ID }}
 
       - name: Create Service Entity
         uses: port-labs/port-github-action@v1
