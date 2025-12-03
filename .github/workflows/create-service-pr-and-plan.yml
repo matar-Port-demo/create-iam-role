@@ -153,7 +153,7 @@ jobs:
               "repo_name": "${{ steps.scaffold_repo.outputs.repo_name }}",
               "project_short_description": "${{ github.event.inputs.description }}"
             }
-          cookiecutterTemplate: https://github.com/cookiecutter/cookiecutter-pypackage
+          cookiecutterTemplate: https://github.com/audreyfeldroy/cookiecutter-pypackage
           blueprintIdentifier: "githubRepository"
           organizationName: ${{ github.repository_owner }}
           createPortEntity: false
