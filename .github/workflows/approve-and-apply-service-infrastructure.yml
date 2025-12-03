@@ -48,7 +48,6 @@ jobs:
           echo "APPROVER_EMAIL=$APPROVER_EMAIL" >> $GITHUB_ENV
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_OUTPUT
 
-      -string
       - name: Get provisioning request entity
         id: get_provisioning_request
         uses: port-labs/port-github-action@v1
