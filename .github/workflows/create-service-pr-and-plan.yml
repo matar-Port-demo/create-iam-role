@@ -479,6 +479,42 @@ jobs:
         env:
           PLAN_OUTPUT: ${{ env.PLAN_OUTPUT }}
 
+      - name: Build provisioning request properties
+        id: build_provisioning_properties
+        run: |
+          INFRA_PR_URL="${{ steps.create_infra_pr.outputs.pull-request-url }}"
+          CICD_PR_URL="${{ steps.create_cicd_pr.outputs.pull-request-url }}"
+          SERVICE_REPO_URL="${{ steps.setup_repo.outputs.repo_url }}"
+          
+          # Build properties JSON, only including CI/CD PR URL if it exists
+          PROPERTIES=$(jq -n \
+            --arg resource_name "${{ github.event.inputs.application_name }}" \
+            --arg resource_type "Service" \
+            --arg status "waiting_approval" \
+            --arg pr_url "$INFRA_PR_URL" \
+            --arg service_repo_url "$SERVICE_REPO_URL" \
+            --arg port_run_link "https://app.getport.io/organization/run?runId=${{ env.PORT_RUN_ID }}" \
+            '{
+              "resource_name": $resource_name,
+              "resource_type": $resource_type,
+              "status": $status,
+              "pr_url": $pr_url,
+              "service_repo_url": $service_repo_url,
+              "port_run_link": $port_run_link
+            }')
+          
+          # Add CI/CD PR URL only if it's not empty
+          if [ -n "$CICD_PR_URL" ] && [ "$CICD_PR_URL" != "" ] && [ "$CICD_PR_URL" != "null" ]; then
+            PROPERTIES=$(echo "$PROPERTIES" | jq --arg cicd_pr_url "$CICD_PR_URL" '. + {"cicd_pr_url": $cicd_pr_url}')
+            echo "✅ CI/CD PR URL will be saved: $CICD_PR_URL"
+          else
+            echo "⚠️  Warning: CI/CD PR URL is empty, not saving to entity"
+          fi
+          
+          echo "PROPERTIES_JSON<<EOF" >> $GITHUB_OUTPUT
+          echo "$PROPERTIES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create provisioning request entity
         uses: port-labs/port-github-action@v1
         with:
@@ -490,16 +526,7 @@ jobs:
           title: "Service Provisioning: ${{ github.event.inputs.application_name }}"
           blueprint: provisioningRequest
           runId: ${{ env.PORT_RUN_ID }}
-          properties: |
-            {
-              "resource_name": "${{ github.event.inputs.application_name }}",
-              "resource_type": "Service",
-              "status": "waiting_approval",
-              "pr_url": "${{ steps.create_infra_pr.outputs.pull-request-url }}",
-              "cicd_pr_url": "${{ steps.create_cicd_pr.outputs.pull-request-url }}",
-              "service_repo_url": "${{ steps.setup_repo.outputs.repo_url }}",
-              "port_run_link": "https://app.getport.io/organization/run?runId=${{ env.PORT_RUN_ID }}"
-            }
+          properties: ${{ steps.build_provisioning_properties.outputs.PROPERTIES_JSON }}
           relations: |
             {
               "requestor": "${{ env.REQUESTOR_EMAIL }}"
