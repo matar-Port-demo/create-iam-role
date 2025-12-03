@@ -365,6 +365,7 @@ jobs:
             DB_USER="$APP_NAME-user"
             DB_PASSWORD="$(openssl rand -base64 32)"
             
+            # Use different delimiter (|) for password replacement to avoid conflicts with special chars
             sed -e "s/{{ database_name }}/$DB_NAME/g" \
                 -e "s/{{ project_id }}/$PROJECT_ID/g" \
                 -e "s/{{ region }}/$REGION/g" \
@@ -372,7 +373,7 @@ jobs:
                 -e "s/{{ database_tier }}/$DB_TIER/g" \
                 -e "s/{{ backup_schedule }}/$BACKUP_SCHEDULE/g" \
                 -e "s/{{ database_user }}/$DB_USER/g" \
-                -e "s/{{ database_password }}/$DB_PASSWORD/g" \
+                -e "s|{{ database_password }}|$DB_PASSWORD|g" \
                 "terraform-templates-repo/templates/database.tf" > "$TF_DIR/database.tf"
           fi
           
