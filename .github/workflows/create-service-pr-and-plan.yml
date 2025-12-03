@@ -40,7 +40,6 @@ permissions:
   actions: read
 
 env:
-  TF_REPO: db-hackathon/app-deployment-repo
   BASE_TF_DIR: resources
   BRANCH_PREFIX: create-service
   MAIN_BRANCH: main
@@ -310,6 +309,19 @@ jobs:
           logMessage: "📋 CI/CD PR created: ${{ steps.create_cicd_pr.outputs.pull-request-url }}"
           link: "[\"${{ steps.create_cicd_pr.outputs.pull-request-url }}\"]"
           
+      - name: Determine Service Repository for Terraform
+        id: determine_tf_repo
+        run: |
+          if [ "${{ github.event.inputs.use_existing_repo }}" = "Create a new Repository" ]; then
+            REPO_NAME="${{ steps.scaffold_repo.outputs.repo_name }}"
+          else
+            REPO_NAME="${{ steps.setup_repo.outputs.repo_name }}"
+          fi
+          TF_REPO="${{ github.repository_owner }}/$REPO_NAME"
+          echo "TF_REPO=$TF_REPO" >> $GITHUB_ENV
+          echo "tf_repo=$TF_REPO" >> $GITHUB_OUTPUT
+          echo "Using service repository for Terraform: $TF_REPO"
+          
       - name: Log infrastructure Terraform generation start
         uses: port-labs/port-github-action@v1
         with:
@@ -318,14 +330,15 @@ jobs:
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "🏗️ Generating infrastructure Terraform configurations..."
-
-      - name: Checkout Terraform Repo
+          logMessage: "🏗️ Generating infrastructure Terraform configurations in service repository: ${{ env.TF_REPO }}..."
+      
+      - name: Checkout Service Repository for Terraform
         uses: actions/checkout@v3
         with:
           repository: ${{ env.TF_REPO }}
           token: ${{ secrets.GH_PAT }}
           path: terraform-repo
+          ref: ${{ env.MAIN_BRANCH }}
 
       - name: Checkout templates repo (for Terraform templates)
         uses: actions/checkout@v3
