@@ -71,17 +71,7 @@ jobs:
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "🚀 Starting service creation for `${{ github.event.inputs.application_name }}`"
-          
-      - name: Log repository setup start
-        uses: port-labs/port-github-action@v1
-        with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
-          operation: PATCH_RUN
-          runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "📦 Setting up repository for service `${{ github.event.inputs.application_name }}`..."
+          logMessage: "🚀 Let's build your service `${{ github.event.inputs.application_name }}`!"
 
       - name: Setup Repository
         id: setup_repo
@@ -196,7 +186,7 @@ jobs:
           echo "REPO_URL=$REPO_URL" >> $GITHUB_ENV
           echo "repo_url=$REPO_URL" >> $GITHUB_OUTPUT
 
-      - name: Log repository setup to Port
+      - name: Log repository ready to Port
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -204,18 +194,8 @@ jobs:
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "📦 Repository ready: ${{ env.REPO_URL }}"
+          logMessage: "✨ Repository ready!"
           link: "[\"${{ env.REPO_URL }}\"]"
-          
-      - name: Log CI/CD workflow generation start
-        uses: port-labs/port-github-action@v1
-        with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
-          operation: PATCH_RUN
-          runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "🔧 Generating CI/CD workflow configuration..."
 
       - name: Checkout templates repo (for CI/CD templates)
         uses: actions/checkout@v3
@@ -306,7 +286,7 @@ jobs:
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "📋 CI/CD PR created: ${{ steps.create_cicd_pr.outputs.pull-request-url }}"
+          logMessage: "🎯 CI/CD workflow PR ready for review!"
           link: "[\"${{ steps.create_cicd_pr.outputs.pull-request-url }}\"]"
           
       - name: Determine Service Repository for Terraform
@@ -322,15 +302,6 @@ jobs:
           echo "tf_repo=$TF_REPO" >> $GITHUB_OUTPUT
           echo "Using service repository for Terraform: $TF_REPO"
           
-      - name: Log infrastructure Terraform generation start
-        uses: port-labs/port-github-action@v1
-        with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
-          operation: PATCH_RUN
-          runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "🏗️ Generating infrastructure Terraform configurations in service repository: ${{ env.TF_REPO }}..."
       
       - name: Checkout Service Repository for Terraform
         uses: actions/checkout@v3
@@ -420,7 +391,7 @@ jobs:
           baseUrl: https://api.getport.io
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "📋 Infrastructure PR created: ${{ steps.create_infra_pr.outputs.pull-request-url }}"
+          logMessage: "🏗️ Infrastructure PR ready for review!"
           link: "[\"${{ steps.create_infra_pr.outputs.pull-request-url }}\"]"
 
       - name: Generate Mock Terraform Plan Output
@@ -479,15 +450,13 @@ jobs:
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: |
-            📋 **Terraform Plan Output:**
+            📋 **Terraform Plan:**
             
             ```
             ${{ env.PLAN_OUTPUT }}
             ```
             
-            ⏸️  **Waiting for approval in Port...**
-            
-            Please review the plan above and approve this action to proceed with service creation.
+            ⏳ **All set! Waiting for approval...**
 
       - name: Build Terraform plan properties
         id: build_plan_properties
@@ -539,14 +508,6 @@ jobs:
           runId: ${{ env.PORT_RUN_ID }}
           properties: ${{ steps.build_plan_properties.outputs.PROPERTIES_JSON }}
 
-      - name: Log PR URLs to Port run
-        uses: port-labs/port-github-action@v1
-        with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
-          operation: PATCH_RUN
-          runId: ${{ env.PORT_RUN_ID }}
           link: |
             ["${{ steps.create_infra_pr.outputs.pull-request-url }}", "${{ steps.create_cicd_pr.outputs.pull-request-url }}"]
 

@@ -78,12 +78,21 @@ jobs:
           echo "CICD_PR_URL=$CICD_PR_URL" >> $GITHUB_ENV
           echo "SERVICE_REPO_URL=$SERVICE_REPO_URL" >> $GITHUB_ENV
           
-          # Extract PR numbers
-          INFRA_PR_NUMBER=$(echo "$INFRA_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
-          CICD_PR_NUMBER=$(echo "$CICD_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+          # Extract PR numbers (handle empty CICD_PR_URL gracefully)
+          INFRA_PR_NUMBER=$(echo "$INFRA_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' || echo "")
+          if [ -n "$CICD_PR_URL" ] && [ "$CICD_PR_URL" != "null" ] && [ "$CICD_PR_URL" != "empty" ]; then
+            CICD_PR_NUMBER=$(echo "$CICD_PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' || echo "")
+          else
+            CICD_PR_NUMBER=""
+          fi
           
           echo "INFRA_PR_NUMBER=$INFRA_PR_NUMBER" >> $GITHUB_ENV
           echo "CICD_PR_NUMBER=$CICD_PR_NUMBER" >> $GITHUB_ENV
+          
+          if [ -z "$INFRA_PR_NUMBER" ]; then
+            echo "❌ Error: Could not extract infrastructure PR number"
+            exit 1
+          fi
 
       - name: Update provisioning request status to approved
         uses: port-labs/port-github-action@v1

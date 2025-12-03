@@ -22,7 +22,7 @@ permissions:
   actions: read
 
 env:
-  TF_REPO: matar-Port-demo/create-iam-role
+  TF_REPO: matar-Port-demo/create-storage-bucket
   BASE_TF_DIR: resources
   BRANCH_PREFIX: create-storage-bucket
   MAIN_BRANCH: main
@@ -45,7 +45,7 @@ jobs:
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
+          baseUrl: https://api.us.getport.io
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "🚀 Starting GCP storage bucket creation for `${{ github.event.inputs.bucket_name }}`"
@@ -92,7 +92,7 @@ jobs:
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
           clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
+          baseUrl: https://api.us.getport.io
           operation: PATCH_RUN
           runId: ${{ needs.start.outputs.port_run_id }}
           logMessage: "📥 Created PR for GCP storage bucket"
@@ -146,7 +146,7 @@ jobs:
   #       with:
   #         clientId: ${{ secrets.PORT_CLIENT_ID }}
   #         clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-  #         baseUrl: https://api.getport.io
+  #         baseUrl: https://api.us.getport.io
   #         operation: PATCH_RUN
   #         runId: ${{ needs.start.outputs.port_run_id }}
   #         logMessage: "🔧 Starting terraform apply for GCP storage bucket `${{ github.event.inputs.bucket_name }}`"
@@ -167,7 +167,7 @@ jobs:
   #       with:
   #         clientId: ${{ secrets.PORT_CLIENT_ID }}
   #         clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-  #         baseUrl: https://api.getport.io
+  #         baseUrl: https://api.us.getport.io
   #         operation: PATCH_RUN
   #         runId: ${{ needs.start.outputs.port_run_id }}
   #         status: "SUCCESS"
