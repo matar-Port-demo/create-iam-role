@@ -248,6 +248,14 @@ jobs:
             TEMPLATE_PATH="templates-repo/templates/cicd/deploy-non-containerized.yml"
           fi
           
+          # Check if template exists
+          if [ ! -f "$TEMPLATE_PATH" ]; then
+            echo "❌ Error: Template file not found: $TEMPLATE_PATH"
+            echo "Available files in templates-repo/templates/cicd/:"
+            ls -la templates-repo/templates/cicd/ || echo "Directory does not exist"
+            exit 1
+          fi
+          
           # Replace template variables
           sed -e "s/{{ application_name }}/$APP_NAME/g" \
               -e "s/{{ cluster_name }}/$APP_NAME-cluster/g" \
@@ -255,7 +263,15 @@ jobs:
               -e "s/{{ project_id }}/PROJECT_ID/g" \
               "$TEMPLATE_PATH" > service-repo/.github/workflows/deploy.yml
           
+          # Verify file was created
+          if [ ! -f "service-repo/.github/workflows/deploy.yml" ]; then
+            echo "❌ Error: Failed to create workflow file"
+            exit 1
+          fi
+          
           echo "✅ CI/CD workflow generated from template: $TEMPLATE_PATH"
+          echo "✅ Workflow file created: service-repo/.github/workflows/deploy.yml"
+          echo "File size: $(wc -c < service-repo/.github/workflows/deploy.yml) bytes"
 
       - name: Verify changes before creating CI/CD PR
         run: |
