@@ -81,21 +81,21 @@ jobs:
       - name: Extract PR URLs from entity
         id: extract_pr_urls
         run: |
-          # Extract PR URLs array from entity
-          PR_URLS=$(echo "$ENTITY_JSON" | jq -r '.properties.pr_urls // []')
+          # Extract PR URLs from entity (separate properties, not array)
+          INFRA_PR_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.pr_url // empty')
+          CICD_PR_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.cicd_pr_url // empty')
           SERVICE_REPO_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.service_repo_url // empty')
           
-          if [ "$PR_URLS" = "[]" ] || [ -z "$PR_URLS" ] || [ "$PR_URLS" = "null" ]; then
-            echo "❌ Error: No PR URLs found in provisioning request entity"
+          if [ -z "$INFRA_PR_URL" ] || [ "$INFRA_PR_URL" == "null" ] || [ "$INFRA_PR_URL" == "" ]; then
+            echo "❌ Error: No infrastructure PR URL found in provisioning request entity"
             echo "Entity properties: $(echo "$ENTITY_JSON" | jq '.properties')"
             exit 1
           fi
           
-          echo "✅ Found PR URLs: $PR_URLS"
-          
-          # Extract individual PR URLs (first is infrastructure, second is CI/CD)
-          INFRA_PR_URL=$(echo "$PR_URLS" | jq -r '.[0] // empty')
-          CICD_PR_URL=$(echo "$PR_URLS" | jq -r '.[1] // empty')
+          echo "✅ Found infrastructure PR URL: $INFRA_PR_URL"
+          if [ -n "$CICD_PR_URL" ] && [ "$CICD_PR_URL" != "null" ] && [ "$CICD_PR_URL" != "" ]; then
+            echo "✅ Found CI/CD PR URL: $CICD_PR_URL"
+          fi
           
           echo "INFRA_PR_URL=$INFRA_PR_URL" >> $GITHUB_ENV
           echo "CICD_PR_URL=$CICD_PR_URL" >> $GITHUB_ENV
@@ -158,27 +158,6 @@ jobs:
           repository: ${{ env.SERVICE_REPO }}
           token: ${{ secrets.GH_PAT }}
 
-      - name: Merge Infrastructure Pull Request
-        run: |
-          gh pr merge ${{ env.INFRA_PR_NUMBER }} --admin --squash
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-
-      - name: Log infrastructure PR merge
-        uses: port-labs/port-github-action@v1
-        with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
-          operation: PATCH_RUN
-          runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "🔀 Infrastructure PR merged successfully"
-
-      - name: Pull latest main branch
-        run: |
-          git checkout main
-          git pull origin main
-
       - name: Generate Mock Terraform Apply Output
         id: mock_apply
         run: |
@@ -235,6 +214,40 @@ jobs:
             
             ✅ Infrastructure provisioned successfully!
 
+      - name: Merge Infrastructure Pull Request
+        run: |
+          gh pr merge ${{ env.INFRA_PR_NUMBER }} --admin --squash
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Log infrastructure PR merge
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🔀 Infrastructure PR merged successfully"
+
+      - name: Merge CI/CD PR
+        if: env.CICD_PR_NUMBER != '' && env.CICD_PR_NUMBER != 'null'
+        run: |
+          gh pr merge ${{ env.CICD_PR_NUMBER }} --admin --squash
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Log CI/CD PR merge
+        if: env.CICD_PR_NUMBER != '' && env.CICD_PR_NUMBER != 'null'
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{ env.PORT_RUN_ID }}
+          logMessage: "🔀 CI/CD PR merged successfully"
+
       - name: Create Cluster Entity (if created)
         if: github.event.inputs.stack_type == 'Containerized (GKE)' && github.event.inputs.k_8_s_setup == 'Create a new Cluster'
         uses: port-labs/port-github-action@v1
@@ -286,24 +299,6 @@ jobs:
           REPO_ID=$(echo "$REPO_URL" | sed 's|.*/||' | sed 's|\.git$||')
           echo "REPO_ID=$REPO_ID" >> $GITHUB_ENV
           echo "repo_identifier=$REPO_ID" >> $GITHUB_OUTPUT
-
-      - name: Merge CI/CD PR
-        if: env.CICD_PR_NUMBER != ''
-        run: |
-          gh pr merge ${{ env.CICD_PR_NUMBER }} --admin --squash
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-
-      - name: Log CI/CD PR merge
-        if: env.CICD_PR_NUMBER != ''
-        uses: port-labs/port-github-action@v1
-        with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
-          operation: PATCH_RUN
-          runId: ${{ env.PORT_RUN_ID }}
-          logMessage: "🔀 CI/CD PR merged successfully"
 
       - name: Build service relations JSON
         id: build_service_relations
