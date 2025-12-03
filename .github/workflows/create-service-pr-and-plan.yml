@@ -295,7 +295,7 @@ jobs:
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "🎯 CI/CD workflow PR ready for review!"
-          link: "[\"${{ steps.create_cicd_pr.outputs.pull-request-url }}\"]"
+          link: "[\"https://github.com/${{ github.repository_owner }}/${{ env.REPO_NAME }}/pulls\"]"
           
       - name: Determine Service Repository for Terraform
         id: determine_tf_repo
@@ -401,7 +401,7 @@ jobs:
           operation: PATCH_RUN
           runId: ${{ env.PORT_RUN_ID }}
           logMessage: "🏗️ Infrastructure PR ready for review!"
-          link: "[\"${{ steps.create_infra_pr.outputs.pull-request-url }}\"]"
+          link: "[\"https://github.com/${{ github.repository_owner }}/${{ env.REPO_NAME }}/pulls\"]"
 
       - name: Generate Mock Terraform Plan Output
         id: mock_plan

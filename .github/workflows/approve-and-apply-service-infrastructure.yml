@@ -400,5 +400,5 @@ jobs:
           summary: "✅ Service `${{ github.event.inputs.application_name }}` created successfully"
           logMessage: "🎉 Service creation complete! Infrastructure provisioned, CI/CD configured, and service entity created."
           link: |
-            ["${{ env.INFRA_PR_URL }}"]
+            ["https://app.getport.io/db_serviceEntity?identifier=${{ github.event.inputs.application_name }}", "https://github.com/${{ env.SERVICE_REPO }}"]
 
