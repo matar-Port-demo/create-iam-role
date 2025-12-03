@@ -257,6 +257,25 @@ jobs:
           
           echo "✅ CI/CD workflow generated from template: $TEMPLATE_PATH"
 
+      - name: Verify changes before creating CI/CD PR
+        run: |
+          cd service-repo
+          echo "Checking git status..."
+          git status
+          echo ""
+          echo "Checking for changes..."
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "⚠️  Warning: No changes detected in service-repo"
+            echo "Listing files in .github/workflows/:"
+            ls -la .github/workflows/ || echo "Directory does not exist"
+            echo ""
+            echo "File contents if exists:"
+            cat .github/workflows/deploy.yml || echo "File does not exist"
+          else
+            echo "✅ Changes detected:"
+            git diff --stat
+          fi
+
       - name: Create CI/CD PR in Service Repository
         id: create_cicd_pr
         uses: peter-evans/create-pull-request@v5
@@ -276,7 +295,7 @@ jobs:
             - Runtime: ${{ github.event.inputs.runtime }}
             
             **Waiting for approval in Port.**
-          create-empty-commit: false
+          create-empty-commit: true
           
       - name: Debug CI/CD PR output
         run: |
