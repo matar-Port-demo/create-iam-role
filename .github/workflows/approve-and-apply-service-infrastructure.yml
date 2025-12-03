@@ -46,8 +46,9 @@ jobs:
           APPROVER_EMAIL="${{ fromJson(github.event.inputs.port_context).approverEmail }}"
           echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_ENV
           echo "APPROVER_EMAIL=$APPROVER_EMAIL" >> $GITHUB_ENV
-          echo "::set-output name=PORT_RUN_ID::$PORT_RUN_ID"
+          echo "PORT_RUN_ID=$PORT_RUN_ID" >> $GITHUB_OUTPUT
 
+      -string
       - name: Get provisioning request entity
         id: get_provisioning_request
         uses: port-labs/port-github-action@v1
@@ -58,13 +59,32 @@ jobs:
           operation: GET
           identifier: ${{ env.PORT_RUN_ID }}
           blueprint: provisioningRequest
+        continue-on-error: true
+
+      - name: Check if entity exists
+        run: |
+          echo "Checking if entity exists for Run ID: ${{ env.PORT_RUN_ID }}"
+          ENTITY_JSON='${{ steps.get_provisioning_request.outputs.entity }}'
+          echo "Entity output: $ENTITY_JSON"
+          
+          if [ -z "$ENTITY_JSON" ] || [ "$ENTITY_JSON" == "null" ] || [ "$ENTITY_JSON" == "" ]; then
+            echo "❌ Error: Could not retrieve provisioning request entity"
+            echo "Run ID: ${{ env.PORT_RUN_ID }}"
+            echo "This might mean the entity doesn't exist yet or the GET operation failed."
+            exit 1
+          fi
+          
+          echo "✅ Successfully retrieved entity"
+          echo "Entity identifier: $(echo "$ENTITY_JSON" | jq -r '.identifier // "unknown"')"
+        env:
+          ENTITY_JSON: ${{ steps.get_provisioning_request.outputs.entity }}
 
       - name: Extract PR URLs from entity
-        id: extract_pr_urls
-        run: |
+        id: |
           # Extract PR URLs array from entity
-          PR_URLS=$(echo "$ENTITY_JSON" | jq -r '.properties.pr_urls // []')
-          SERVICE_REPO_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.service_repo_url // empty')
+          PR_URLS=$(echo "$ENTITY_JSON"$ENTITY_JSON" | jq -r '.properties.pr_urls // []')
+          SERVICE_REPO_URL=$(echo "$ENTITY_JSON"$ENTITY_JSON" | jq -r '.properties.service_repo_url // empty')
+        env:
           
           if [ "$PR_URLS" = "[]" ] || [ -z "$PR_URLS" ] || [ "$PR_URLS" = "null" ]; then
             echo "❌ Error: No PR URLs found in provisioning request entity"
