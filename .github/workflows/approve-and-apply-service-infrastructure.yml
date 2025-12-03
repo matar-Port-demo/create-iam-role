@@ -216,7 +216,8 @@ jobs:
 
       - name: Merge Infrastructure Pull Request
         run: |
-          gh pr merge ${{ env.INFRA_PR_NUMBER }} --admin --squash
+          echo "Merging Infrastructure PR #${{ env.INFRA_PR_NUMBER }} in repository ${{ env.SERVICE_REPO }}"
+          gh pr merge ${{ env.INFRA_PR_NUMBER }} --repo ${{ env.SERVICE_REPO }} --admin --squash
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
@@ -233,7 +234,8 @@ jobs:
       - name: Merge CI/CD PR
         if: env.CICD_PR_NUMBER != '' && env.CICD_PR_NUMBER != 'null'
         run: |
-          gh pr merge ${{ env.CICD_PR_NUMBER }} --admin --squash
+          echo "Merging CI/CD PR #${{ env.CICD_PR_NUMBER }} in repository ${{ env.SERVICE_REPO }}"
+          gh pr merge ${{ env.CICD_PR_NUMBER }} --repo ${{ env.SERVICE_REPO }} --admin --squash
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
