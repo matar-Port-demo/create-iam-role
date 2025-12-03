@@ -79,11 +79,11 @@ jobs:
           ENTITY_JSON: ${{ steps.get_provisioning_request.outputs.entity }}
 
       - name: Extract PR URLs from entity
-        id: |
+        id: extract_pr_urls
+        run: |
           # Extract PR URLs array from entity
-          PR_URLS=$(echo "$ENTITY_JSON"$ENTITY_JSON" | jq -r '.properties.pr_urls // []')
-          SERVICE_REPO_URL=$(echo "$ENTITY_JSON"$ENTITY_JSON" | jq -r '.properties.service_repo_url // empty')
-        env:
+          PR_URLS=$(echo "$ENTITY_JSON" | jq -r '.properties.pr_urls // []')
+          SERVICE_REPO_URL=$(echo "$ENTITY_JSON" | jq -r '.properties.service_repo_url // empty')
           
           if [ "$PR_URLS" = "[]" ] || [ -z "$PR_URLS" ] || [ "$PR_URLS" = "null" ]; then
             echo "❌ Error: No PR URLs found in provisioning request entity"
